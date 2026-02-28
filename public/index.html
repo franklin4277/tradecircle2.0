@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TradeCircle</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="topbar">
+    <a class="brand" href="index.html">TradeCircle</a>
+    <div class="top-links">
+        <a href="login.html">Login</a>
+        <a href="register.html" class="pill-link">Register</a>
+    </div>
+</nav>
+
+<section class="market-hero container">
+    <div>
+        <p class="eyebrow">Trusted Marketplace</p>
+        <h1>Buy and sell across Kenya</h1>
+        <p class="hero-copy">Discover verified listings, negotiate directly, and trade safely.</p>
+        <a href="register.html" class="main-btn">Post Your First Ad</a>
+    </div>
+    <aside class="hero-panel">
+        <h3>Quick Filters</h3>
+        <div class="chip-row">
+            <span class="chip">Electronics</span>
+            <span class="chip">Vehicles</span>
+            <span class="chip">Property</span>
+            <span class="chip">Fashion</span>
+        </div>
+    </aside>
+</section>
+
+<section class="container sticky-search">
+    <div class="search-strip">
+        <input type="text" id="marketSearch" placeholder="What are you looking for?">
+        <select id="marketCategory"></select>
+        <select id="marketLocation"></select>
+        <input type="text" id="marketMinPrice" placeholder="Min price">
+        <input type="text" id="marketMaxPrice" placeholder="Max price">
+        <select id="marketSort">
+            <option value="newest">Newest</option>
+            <option value="price_low">Price: Low to High</option>
+            <option value="price_high">Price: High to Low</option>
+        </select>
+        <button id="clearFilters" type="button">Clear</button>
+    </div>
+</section>
+
+<main class="container marketplace-shell">
+    <aside class="panel sidebar">
+        <h3>Categories</h3>
+        <div class="category-list">
+            <button type="button" class="category-link active" data-category="All Categories">All Categories</button>
+            <button type="button" class="category-link" data-category="Electronics">Electronics</button>
+            <button type="button" class="category-link" data-category="Vehicles">Vehicles</button>
+            <button type="button" class="category-link" data-category="Property">Property</button>
+            <button type="button" class="category-link" data-category="Fashion">Fashion</button>
+            <button type="button" class="category-link" data-category="Home & Garden">Home & Garden</button>
+            <button type="button" class="category-link" data-category="Services">Services</button>
+            <button type="button" class="category-link" data-category="Other">Other</button>
+        </div>
+    </aside>
+
+    <section>
+        <section class="section-head">
+            <h2>Latest Listings</h2>
+            <p>Fresh approved listings from TradeCircle sellers. <strong id="resultsCount">0 results</strong></p>
+            <div class="chip-row">
+                <button type="button" class="location-chip active" data-location="All Kenya">All Kenya</button>
+                <button type="button" class="location-chip" data-location="Nairobi">Nairobi</button>
+                <button type="button" class="location-chip" data-location="Mombasa">Mombasa</button>
+                <button type="button" class="location-chip" data-location="Kisumu">Kisumu</button>
+                <button type="button" class="location-chip" data-location="Nakuru">Nakuru</button>
+                <button type="button" class="location-chip" data-location="Eldoret">Eldoret</button>
+            </div>
+        </section>
+        <div id="listings" class="listing-grid"></div>
+    </section>
+</main>
+
+<script src="script.js"></script>
+</body>
+</html>

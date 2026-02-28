@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel - TradeCircle</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="topbar">
+    <a class="brand" href="index.html">TradeCircle Admin</a>
+    <div class="top-links">
+        <button class="logout-btn" onclick="logout()" type="button">Logout</button>
+    </div>
+</nav>
+
+<main class="container panel">
+    <p class="eyebrow">Moderation Queue</p>
+    <h3>Pending Listings</h3>
+    <p id="adminStatus" class="status" aria-live="polite"></p>
+    <div id="pending" class="listing-grid"></div>
+</main>
+
+<script src="script.js"></script>
+</body>
+</html>

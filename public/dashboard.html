@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - TradeCircle</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="topbar">
+    <a class="brand" href="index.html">TradeCircle Seller</a>
+    <div class="top-links">
+        <button class="logout-btn" onclick="logout()" type="button">Logout</button>
+    </div>
+</nav>
+
+<main class="container market-layout">
+    <section class="panel">
+        <p class="eyebrow">Seller Tools</p>
+        <h3>Add Listing</h3>
+        <form id="listingForm" class="listing-form" enctype="multipart/form-data">
+            <label for="title">Listing Title</label>
+            <input type="text" id="title" placeholder="Listing Title" required>
+            <label for="price">Price (Ksh)</label>
+            <input type="text" id="price" placeholder="Price (Ksh)" required>
+            <label for="category">Category</label>
+            <select id="category"></select>
+            <label for="location">Location</label>
+            <input type="text" id="location" placeholder="e.g. Nairobi">
+            <label for="description">Description</label>
+            <textarea id="description" placeholder="Description" required></textarea>
+            <label for="picture">Picture</label>
+            <input type="file" id="picture" accept="image/*">
+            <button type="submit">Submit Listing</button>
+        </form>
+        <p id="listingStatus" class="status" aria-live="polite"></p>
+    </section>
+
+    <section class="panel">
+        <p class="eyebrow">Browse</p>
+        <h3>Search Listings</h3>
+        <div class="search-row">
+            <input type="text" id="searchBox" placeholder="Search by title">
+            <select id="searchCategory"></select>
+            <select id="searchLocation"></select>
+            <button onclick="search()" type="button">Search</button>
+        </div>
+        <p class="tiny-meta" id="searchCount">0 results</p>
+        <div id="results"></div>
+    </section>
+</main>
+
+<script src="script.js"></script>
+</body>
+</html>

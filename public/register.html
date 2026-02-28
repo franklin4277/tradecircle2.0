@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - TradeCircle</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="topbar">
+    <a class="brand" href="index.html">TradeCircle</a>
+    <div class="top-links">
+        <a href="login.html" class="pill-link">Login</a>
+    </div>
+</nav>
+
+<div class="container auth-shell">
+    <section class="auth-card">
+        <p class="eyebrow">Join Marketplace</p>
+        <h2 class="centered-title">Create Account</h2>
+        <form id="registerForm" class="auth-form" novalidate>
+            <label for="name">Full Name</label>
+            <input type="text" id="name" placeholder="Full Name" autocomplete="name" required>
+            <label for="email">Email</label>
+            <input type="email" id="email" placeholder="Email" autocomplete="email" required>
+            <label for="password">Password</label>
+            <input type="password" id="password" placeholder="Password" autocomplete="new-password" required minlength="6">
+            <label for="contact">Contact Info</label>
+            <input type="text" id="contact" placeholder="Phone/WhatsApp">
+            <button type="submit">Register</button>
+        </form>
+        <p id="authStatus" class="status" aria-live="polite"></p>
+        <p class="centered-link">
+            <a href="login.html">Already have an account? Login</a>
+        </p>
+    </section>
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
