@@ -8,6 +8,7 @@ const cors = require("cors");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 
 const User = require("./models/user");
 const Listing = require("./models/listing");
@@ -24,8 +25,48 @@ if (!fs.existsSync(uploadsDir)) {
 }
 app.use("/uploads", express.static(uploadsDir));
 
+const cloudinaryConfig = {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || "",
+    apiKey: process.env.CLOUDINARY_API_KEY || "",
+    apiSecret: process.env.CLOUDINARY_API_SECRET || ""
+};
+const useCloudinary = !!(
+    cloudinaryConfig.cloudName &&
+    cloudinaryConfig.apiKey &&
+    cloudinaryConfig.apiSecret
+);
+
+async function uploadToCloudinary(file) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const folder = process.env.CLOUDINARY_FOLDER || "tradecircle";
+    const paramsToSign = `folder=${folder}&timestamp=${timestamp}${cloudinaryConfig.apiSecret}`;
+    const signature = crypto.createHash("sha1").update(paramsToSign).digest("hex");
+    const form = new FormData();
+    const originalName = path.basename(file.originalname || "upload.jpg");
+    const blob = new Blob([file.buffer], { type: file.mimetype || "application/octet-stream" });
+    form.append("file", blob, originalName);
+    form.append("api_key", cloudinaryConfig.apiKey);
+    form.append("timestamp", String(timestamp));
+    form.append("folder", folder);
+    form.append("signature", signature);
+
+    const endpoint = `https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/image/upload`;
+    const response = await fetch(endpoint, {
+        method: "POST",
+        body: form
+    });
+    const data = await response.json();
+    if (!response.ok || !data.secure_url) {
+        const msg = data && data.error && data.error.message
+            ? data.error.message
+            : "Cloudinary upload failed";
+        throw new Error(msg);
+    }
+    return data.secure_url;
+}
+
 // Multer setup for image uploads
-const storage = multer.diskStorage({
+const diskStorage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, uploadsDir);
     },
@@ -35,7 +76,7 @@ const storage = multer.diskStorage({
     }
 });
 const upload = multer({
-    storage,
+    storage: useCloudinary ? multer.memoryStorage() : diskStorage,
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (req, file, cb) => {
         if (!file.mimetype.startsWith("image/")) {
@@ -142,7 +183,12 @@ app.post("/api/listing", auth, upload.single("picture"), async (req, res) => {
         if (!title || !price || !description) {
             return res.status(400).json({ msg: "Title, price, and description are required" });
         }
-        const picture = req.file ? `/uploads/${req.file.filename}` : undefined;
+        let picture;
+        if (req.file) {
+            picture = useCloudinary
+                ? await uploadToCloudinary(req.file)
+                : `/uploads/${req.file.filename}`;
+        }
         const listingData = {
             title: String(title).trim(),
             price: String(price).trim(),

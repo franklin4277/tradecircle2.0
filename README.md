@@ -31,6 +31,10 @@ git push -u origin main
    - `JWT_SECRET` = strong random secret
    - `NODE_ENV` = `production`
    - `CORS_ORIGIN` (optional, only if serving frontend from another domain)
+   - `CLOUDINARY_CLOUD_NAME` = your Cloudinary cloud name
+   - `CLOUDINARY_API_KEY` = your Cloudinary API key
+   - `CLOUDINARY_API_SECRET` = your Cloudinary API secret
+   - `CLOUDINARY_FOLDER` (optional) = e.g. `tradecircle`
 
 This repo includes `render.yaml`, so Render can auto-detect the settings.
 
@@ -42,5 +46,6 @@ This repo includes `render.yaml`, so Render can auto-detect the settings.
 ## Notes
 
 - `.env` is ignored by git. Keep secrets out of GitHub.
+- On Render, local `uploads/` files are not persistent. Cloudinary vars above make image URLs persistent across sleep/redeploy.
 - If Git is not installed on Windows:
   - `winget install --id Git.Git -e --source winget`
