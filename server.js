@@ -128,7 +128,7 @@ const requireAdmin = (req, res, next) => {
 /* ---------------- Registration ---------------- */
 app.post("/api/register", async (req, res) => {
     try {
-        const { name, email, password, contact } = req.body;
+        const { name, email, password, contact, bio, location } = req.body;
         if (!name || !email || !password) {
             return res.status(400).json({ msg: "Name, email, and password are required" });
         }
@@ -147,9 +147,23 @@ app.post("/api/register", async (req, res) => {
             name: String(name).trim(),
             email: String(email).trim().toLowerCase(),
             password: hashed,
-            contact: contact || ""
+            contact: contact ? String(contact).trim() : "",
+            profile: {
+                bio: bio ? String(bio).trim() : "",
+                location: location ? String(location).trim() : ""
+            }
         });
-        res.json({ msg: "Registered successfully", user: { id: user._id, name: user.name, email: user.email, contact: user.contact, role: user.role } });
+        res.json({
+            msg: "Registered successfully",
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                contact: user.contact,
+                profile: user.profile,
+                role: user.role
+            }
+        });
     } catch (err) {
         res.status(400).json({ msg: err.message || "Registration failed" });
     }
@@ -170,16 +184,80 @@ app.post("/api/login", async (req, res) => {
         if (!match) return res.status(400).json({ msg: "Wrong password" });
 
         const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET);
-        res.json({ token, user: { name: user.name, role: user.role } });
+        res.json({
+            token,
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                contact: user.contact,
+                profile: user.profile || {},
+                role: user.role
+            }
+        });
     } catch (err) {
         res.status(500).json({ msg: err.message });
+    }
+});
+
+/* ---------------- User Profile ---------------- */
+app.get("/api/profile", auth, async (req, res) => {
+    try {
+        const user = await User.findById(req.user.id).select("name email contact profile role");
+        if (!user) return res.status(404).json({ msg: "User not found" });
+        res.json({
+            id: user._id,
+            name: user.name,
+            email: user.email,
+            contact: user.contact || "",
+            profile: user.profile || {},
+            role: user.role
+        });
+    } catch (err) {
+        res.status(500).json({ msg: err.message || "Failed to load profile" });
+    }
+});
+
+app.put("/api/profile", auth, async (req, res) => {
+    try {
+        const { name, contact, bio, location } = req.body;
+        const update = {};
+        if (typeof name === "string") update.name = name.trim();
+        if (typeof contact === "string") update.contact = contact.trim();
+        if (typeof bio === "string") update["profile.bio"] = bio.trim();
+        if (typeof location === "string") update["profile.location"] = location.trim();
+
+        if (Object.keys(update).length === 0) {
+            return res.status(400).json({ msg: "No profile fields provided" });
+        }
+
+        const user = await User.findByIdAndUpdate(
+            req.user.id,
+            { $set: update },
+            { new: true, runValidators: true, fields: "name email contact profile role" }
+        );
+        if (!user) return res.status(404).json({ msg: "User not found" });
+
+        res.json({
+            msg: "Profile updated",
+            user: {
+                id: user._id,
+                name: user.name,
+                email: user.email,
+                contact: user.contact || "",
+                profile: user.profile || {},
+                role: user.role
+            }
+        });
+    } catch (err) {
+        res.status(400).json({ msg: err.message || "Failed to update profile" });
     }
 });
 
 /* ---------------- Add Listing ---------------- */
 app.post("/api/listing", auth, upload.single("picture"), async (req, res) => {
     try {
-        const { title, price, description, category, location } = req.body;
+        const { title, price, description, category, location, contactPlatform } = req.body;
         if (!title || !price || !description) {
             return res.status(400).json({ msg: "Title, price, and description are required" });
         }
@@ -195,6 +273,7 @@ app.post("/api/listing", auth, upload.single("picture"), async (req, res) => {
             description: String(description).trim(),
             category: category ? String(category).trim() : "Other",
             location: location ? String(location).trim() : "All Kenya",
+            contactPlatform: contactPlatform ? String(contactPlatform).trim() : "Phone",
             picture,
             status: "pending",
             owner: req.user && req.user.id ? req.user.id : undefined
@@ -211,7 +290,7 @@ app.get("/api/listings", async (req, res) => {
     try {
         const listings = await Listing.find({ status: "approved" }).populate({
             path: "owner",
-            select: "name email contact"
+            select: "name email contact profile"
         });
         res.json(listings);
     } catch (err) {
@@ -229,7 +308,7 @@ app.get("/api/admin/pending", auth, requireAdmin, async (req, res) => {
     try {
         const listings = await Listing.find({ status: "pending" }).populate({
             path: "owner",
-            select: "name email contact"
+            select: "name email contact profile"
         });
         res.json(listings);
     } catch (err) {

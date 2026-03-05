@@ -10,6 +10,7 @@
 <nav class="topbar">
     <a class="brand" href="index.html">TradeCircle Seller</a>
     <div class="top-links">
+        <a href="profile.html" class="pill-link">Profile</a>
         <button class="logout-btn" onclick="logout()" type="button">Logout</button>
     </div>
 </nav>
@@ -27,6 +28,15 @@
             <select id="category"></select>
             <label for="location">Location</label>
             <input type="text" id="location" placeholder="e.g. Nairobi">
+            <label for="contactPlatform">Contact Platform</label>
+            <select id="contactPlatform">
+                <option value="Phone">Phone</option>
+                <option value="WhatsApp">WhatsApp</option>
+                <option value="Telegram">Telegram</option>
+                <option value="Email">Email</option>
+                <option value="SMS">SMS</option>
+                <option value="Other">Other</option>
+            </select>
             <label for="description">Description</label>
             <textarea id="description" placeholder="Description" required></textarea>
             <label for="picture">Picture</label>

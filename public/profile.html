@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Profile - TradeCircle</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<nav class="topbar">
+    <a class="brand" href="dashboard.html">TradeCircle Seller</a>
+    <div class="top-links">
+        <a href="dashboard.html" class="pill-link">Dashboard</a>
+        <button class="logout-btn" onclick="logout()" type="button">Logout</button>
+    </div>
+</nav>
+
+<main class="container">
+    <section class="panel">
+        <p class="eyebrow">Account</p>
+        <h3>User Profile</h3>
+        <form id="profileForm" class="listing-form" novalidate>
+            <label for="profileName">Full Name</label>
+            <input type="text" id="profileName" placeholder="Full Name" required>
+            <label for="profileContact">Phone Number</label>
+            <input type="text" id="profileContact" placeholder="e.g. 07xx xxx xxx">
+            <label for="profileLocation">Location</label>
+            <input type="text" id="profileLocation" placeholder="e.g. Nairobi">
+            <label for="profileBio">Bio</label>
+            <textarea id="profileBio" placeholder="Tell buyers what you sell"></textarea>
+            <button type="submit">Save Profile</button>
+        </form>
+        <p id="profileStatus" class="status" aria-live="polite"></p>
+    </section>
+</main>
+
+<script src="script.js"></script>
+</body>
+</html>

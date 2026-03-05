@@ -80,6 +80,9 @@ function logout() {
 }
 
 function buildProductCard(item) {
+    const sellerPhone = item.owner?.contact ? escapeHtml(item.owner.contact) : "Not provided";
+    const fallbackEmail = item.owner?.email ? escapeHtml(item.owner.email) : "N/A";
+    const contactPlatform = escapeHtml(item.contactPlatform || "Phone");
     return `
         <img src="${item.picture ? escapeHtml(item.picture) : "https://via.placeholder.com/220x160?text=No+Image"}" alt="${escapeHtml(item.title)}">
         <div class="badge-row">
@@ -90,8 +93,10 @@ function buildProductCard(item) {
         <div class="price">Ksh ${escapeHtml(item.price)}</div>
         <p>${escapeHtml(item.description)}</p>
         <div class="contact">
-            <strong>Seller:</strong>
-            ${item.owner?.contact ? escapeHtml(item.owner.contact) : (item.owner?.email ? escapeHtml(item.owner.email) : "N/A")}
+            <strong>Seller:</strong> ${escapeHtml(item.owner?.name || "Unknown")}<br>
+            <strong>Platform:</strong> ${contactPlatform}<br>
+            <strong>Phone:</strong> ${sellerPhone}<br>
+            <strong>Email:</strong> ${fallbackEmail}
         </div>
     `;
 }
@@ -252,6 +257,8 @@ async function register() {
     const email = document.getElementById("email")?.value.trim() || "";
     const password = document.getElementById("password")?.value || "";
     const contact = document.getElementById("contact")?.value.trim() || "";
+    const location = document.getElementById("location")?.value.trim() || "";
+    const bio = document.getElementById("bio")?.value.trim() || "";
 
     if (!name || !email || !password) {
         setStatus("authStatus", "Name, email, and password are required.", true);
@@ -262,7 +269,7 @@ async function register() {
         const res = await fetch("/api/register", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name, email, password, contact })
+            body: JSON.stringify({ name, email, password, contact, location, bio })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.msg || "Registration failed");
@@ -273,6 +280,52 @@ async function register() {
         }, 900);
     } catch (err) {
         setStatus("authStatus", err.message || "Registration failed", true);
+    }
+}
+
+async function loadProfile() {
+    if (!requireAuth()) return;
+    try {
+        const res = await fetch("/api/profile", { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.msg || "Failed to load profile");
+        const nameField = document.getElementById("profileName");
+        const contactField = document.getElementById("profileContact");
+        const locationField = document.getElementById("profileLocation");
+        const bioField = document.getElementById("profileBio");
+        if (nameField) nameField.value = data.name || "";
+        if (contactField) contactField.value = data.contact || "";
+        if (locationField) locationField.value = data.profile?.location || "";
+        if (bioField) bioField.value = data.profile?.bio || "";
+    } catch (err) {
+        setStatus("profileStatus", err.message || "Failed to load profile", true);
+    }
+}
+
+async function saveProfile(event) {
+    event.preventDefault();
+    if (!requireAuth()) return;
+    const name = document.getElementById("profileName")?.value.trim() || "";
+    const contact = document.getElementById("profileContact")?.value.trim() || "";
+    const location = document.getElementById("profileLocation")?.value.trim() || "";
+    const bio = document.getElementById("profileBio")?.value.trim() || "";
+
+    if (!name) {
+        setStatus("profileStatus", "Name is required.", true);
+        return;
+    }
+
+    try {
+        const res = await fetch("/api/profile", {
+            method: "PUT",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ name, contact, location, bio })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.msg || "Failed to update profile");
+        setStatus("profileStatus", data.msg || "Profile updated.", false);
+    } catch (err) {
+        setStatus("profileStatus", err.message || "Failed to update profile", true);
     }
 }
 
@@ -312,6 +365,7 @@ async function submitListing(event) {
     const description = document.getElementById("description")?.value.trim() || "";
     const category = document.getElementById("category")?.value || "Other";
     const location = document.getElementById("location")?.value.trim() || "All Kenya";
+    const contactPlatform = document.getElementById("contactPlatform")?.value || "Phone";
     const picture = document.getElementById("picture")?.files?.[0];
 
     if (!title || !price || !description) {
@@ -325,6 +379,7 @@ async function submitListing(event) {
     formData.append("description", description);
     formData.append("category", category);
     formData.append("location", location);
+    formData.append("contactPlatform", contactPlatform);
     if (picture) formData.append("picture", picture);
 
     try {
@@ -403,7 +458,8 @@ async function loadPendingListings() {
                 <p>${escapeHtml(item.description)}</p>
                 <p><strong>Ksh ${escapeHtml(item.price)}</strong></p>
                 <p><strong>Category:</strong> ${escapeHtml(item.category || "Other")} | <strong>Location:</strong> ${escapeHtml(item.location || "All Kenya")}</p>
-                <p>Owner: ${escapeHtml(item.owner?.name || "Unknown")} (${escapeHtml(item.owner?.email || "N/A")})</p>
+                <p><strong>Contact Platform:</strong> ${escapeHtml(item.contactPlatform || "Phone")}</p>
+                <p>Owner: ${escapeHtml(item.owner?.name || "Unknown")} | Phone: ${escapeHtml(item.owner?.contact || "N/A")} | Email: ${escapeHtml(item.owner?.email || "N/A")}</p>
                 <div class="row-actions">
                     <button data-action="approve" data-id="${escapeHtml(item._id)}">Approve</button>
                     <button class="btn-danger" data-action="reject" data-id="${escapeHtml(item._id)}">Reject</button>
@@ -456,6 +512,13 @@ document.addEventListener("DOMContentLoaded", () => {
     if (listingForm) {
         requireAuth();
         listingForm.addEventListener("submit", submitListing);
+    }
+
+    const profileForm = document.getElementById("profileForm");
+    if (profileForm) {
+        requireAuth();
+        loadProfile();
+        profileForm.addEventListener("submit", saveProfile);
     }
 
     ["searchBox", "searchCategory", "searchLocation"].forEach(id => {
