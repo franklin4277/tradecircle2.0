@@ -19,6 +19,7 @@ const MARKET_LOCATIONS = [
 ];
 
 let listingsCache = [];
+let currentUserId = localStorage.getItem("userId") || "";
 
 function escapeHtml(str) {
     if (!str) return "";
@@ -76,6 +77,7 @@ function requireAuth() {
 
 function logout() {
     localStorage.clear();
+    currentUserId = "";
     window.location.href = "index.html";
 }
 
@@ -96,6 +98,12 @@ function sanitizeContactLink(link) {
     } catch (err) {
         return "";
     }
+}
+
+function formatDateTime(value) {
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return "N/A";
+    return dt.toLocaleString();
 }
 
 function buildProductCard(item) {
@@ -373,6 +381,10 @@ async function login() {
 
         localStorage.setItem("token", data.token);
         if (data.user?.role) localStorage.setItem("role", data.user.role);
+        if (data.user?.id) {
+            currentUserId = String(data.user.id);
+            localStorage.setItem("userId", currentUserId);
+        }
         window.location.href = data.user?.role === "admin" ? "adminpanel.html" : "dashboard.html";
     } catch (err) {
         setStatus("authStatus", err.message || "Login failed", true);
@@ -503,8 +515,16 @@ async function loadPendingListings() {
     }
 }
 
-async function moderateListing(id, action) {
-    const endpoint = action === "approve" ? "/api/admin/approve" : "/api/admin/reject";
+async function moderateListing(id, action, statusTarget = "adminStatus") {
+    const endpointMap = {
+        approve: "/api/admin/approve",
+        reject: "/api/admin/reject",
+        takedown: "/api/admin/takedown",
+        restore: "/api/admin/restore"
+    };
+    const endpoint = endpointMap[action];
+    if (!endpoint) return;
+
     try {
         const res = await fetch(endpoint, {
             method: "POST",
@@ -513,10 +533,176 @@ async function moderateListing(id, action) {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.msg || `Failed to ${action} listing`);
-        setStatus("adminStatus", data.msg || `Listing ${action}d`, false);
+        setStatus(statusTarget, data.msg || `Listing ${action}d`, false);
         await loadPendingListings();
+        await loadAdminListings();
     } catch (err) {
-        setStatus("adminStatus", err.message || `Failed to ${action} listing`, true);
+        setStatus(statusTarget, err.message || `Failed to ${action} listing`, true);
+    }
+}
+
+async function ensureCurrentUserId() {
+    if (currentUserId) return currentUserId;
+    try {
+        const res = await fetch("/api/profile", { headers: authHeaders() });
+        const data = await res.json();
+        if (res.ok && data?.id) {
+            currentUserId = String(data.id);
+            localStorage.setItem("userId", currentUserId);
+        }
+    } catch (err) {
+        // ignore and keep fallback behavior
+    }
+    return currentUserId;
+}
+
+async function loadAdminListings() {
+    const container = document.getElementById("adminListings");
+    if (!container) return;
+    if (!requireAuth()) return;
+
+    const role = localStorage.getItem("role");
+    if (role !== "admin") {
+        container.innerHTML = "<p>Admin access required.</p>";
+        return;
+    }
+
+    const statusFilter = document.getElementById("adminListingFilter")?.value || "all";
+    const query = statusFilter === "all" ? "" : `?status=${encodeURIComponent(statusFilter)}`;
+
+    container.innerHTML = "<p>Loading listings...</p>";
+    try {
+        const res = await fetch(`/api/admin/listings${query}`, {
+            headers: authHeaders()
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.msg || "Failed to fetch admin listings");
+
+        container.innerHTML = "";
+        if (!Array.isArray(data) || data.length === 0) {
+            container.innerHTML = "<p>No listings for this filter.</p>";
+            return;
+        }
+
+        data.forEach(item => {
+            const safeContactLink = sanitizeContactLink(item.contactLink);
+            const adminContactLink = safeContactLink
+                ? `<a href="${escapeHtml(safeContactLink)}" target="_blank" rel="noopener noreferrer">Open Contact Link</a>`
+                : "Not provided";
+            const status = item.status || "pending";
+            const actions = [];
+            if (status === "pending") {
+                actions.push(`<button data-action="approve" data-id="${escapeHtml(item._id)}">Approve</button>`);
+                actions.push(`<button class="btn-danger" data-action="reject" data-id="${escapeHtml(item._id)}">Reject</button>`);
+            } else if (status === "approved") {
+                actions.push(`<button class="btn-danger" data-action="takedown" data-id="${escapeHtml(item._id)}">Take Down</button>`);
+            } else if (status === "rejected") {
+                actions.push(`<button data-action="restore" data-id="${escapeHtml(item._id)}">Restore</button>`);
+            }
+
+            const card = document.createElement("article");
+            card.className = "card";
+            card.innerHTML = `
+                <h4>${escapeHtml(item.title)}</h4>
+                <p>${escapeHtml(item.description)}</p>
+                <p><strong>Ksh ${escapeHtml(item.price)}</strong></p>
+                <p><strong>Status:</strong> ${escapeHtml(status)}</p>
+                <p><strong>Category:</strong> ${escapeHtml(item.category || "Other")} | <strong>Location:</strong> ${escapeHtml(item.location || "All Kenya")}</p>
+                <p><strong>Contact Platform:</strong> ${escapeHtml(item.contactPlatform || "Phone")}</p>
+                <p><strong>Contact Link:</strong> ${adminContactLink}</p>
+                <p>Owner: ${escapeHtml(item.owner?.name || "Unknown")} | Phone: ${escapeHtml(item.owner?.contact || "N/A")} | Email: ${escapeHtml(item.owner?.email || "N/A")}</p>
+                <div class="row-actions">${actions.join("")}</div>
+            `;
+            container.appendChild(card);
+        });
+    } catch (err) {
+        container.innerHTML = `<p>${escapeHtml(err.message || "Failed to load admin listings.")}</p>`;
+    }
+}
+
+async function updateUserRole(id, role) {
+    try {
+        const res = await fetch("/api/admin/users/role", {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ id, role })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.msg || "Failed to update user role");
+        setStatus("adminUsersStatus", data.msg || "User role updated", false);
+        await loadAdminUsers();
+    } catch (err) {
+        setStatus("adminUsersStatus", err.message || "Failed to update user role", true);
+    }
+}
+
+async function updateUserStatus(id, isActive) {
+    try {
+        const res = await fetch("/api/admin/users/status", {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ id, isActive })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.msg || "Failed to update user status");
+        setStatus("adminUsersStatus", data.msg || "User status updated", false);
+        await loadAdminUsers();
+    } catch (err) {
+        setStatus("adminUsersStatus", err.message || "Failed to update user status", true);
+    }
+}
+
+async function loadAdminUsers() {
+    const container = document.getElementById("users");
+    if (!container) return;
+    if (!requireAuth()) return;
+
+    const role = localStorage.getItem("role");
+    if (role !== "admin") {
+        container.innerHTML = "<p>Admin access required.</p>";
+        return;
+    }
+
+    await ensureCurrentUserId();
+    container.innerHTML = "<p>Loading users...</p>";
+    try {
+        const res = await fetch("/api/admin/users", { headers: authHeaders() });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.msg || "Failed to fetch users");
+
+        container.innerHTML = "";
+        if (!Array.isArray(data) || data.length === 0) {
+            container.innerHTML = "<p>No users found.</p>";
+            return;
+        }
+
+        data.forEach(user => {
+            const isSelf = currentUserId && String(user._id) === String(currentUserId);
+            const nextRole = user.role === "admin" ? "user" : "admin";
+            const roleLabel = user.role === "admin" ? "Make User" : "Make Admin";
+            const isActive = user.isActive !== false;
+            const nextActive = !isActive;
+            const statusLabel = isActive ? "Suspend" : "Activate";
+            const disableAttr = isSelf ? "disabled" : "";
+            const statusBtnClass = isActive ? "btn-danger" : "";
+            const card = document.createElement("article");
+            card.className = "card";
+            card.innerHTML = `
+                <h4>${escapeHtml(user.name || "Unnamed User")}</h4>
+                <p><strong>Email:</strong> ${escapeHtml(user.email || "N/A")}</p>
+                <p><strong>Phone:</strong> ${escapeHtml(user.contact || "N/A")}</p>
+                <p><strong>Role:</strong> ${escapeHtml(user.role || "user")} | <strong>Status:</strong> ${isActive ? "active" : "suspended"}</p>
+                <p><strong>Joined:</strong> ${escapeHtml(formatDateTime(user.createdAt))}</p>
+                ${isSelf ? "<p><em>This is your account.</em></p>" : ""}
+                <div class="row-actions">
+                    <button data-user-action="role" data-id="${escapeHtml(user._id)}" data-role="${escapeHtml(nextRole)}" ${disableAttr}>${roleLabel}</button>
+                    <button class="${statusBtnClass}" data-user-action="status" data-id="${escapeHtml(user._id)}" data-active="${nextActive ? "true" : "false"}" ${disableAttr}>${statusLabel}</button>
+                </div>
+            `;
+            container.appendChild(card);
+        });
+    } catch (err) {
+        container.innerHTML = `<p>${escapeHtml(err.message || "Failed to load users.")}</p>`;
     }
 }
 
@@ -602,6 +788,35 @@ document.addEventListener("DOMContentLoaded", () => {
             const btn = e.target.closest("button[data-action]");
             if (!btn) return;
             moderateListing(btn.dataset.id, btn.dataset.action);
+        });
+    }
+
+    const adminListingFilter = document.getElementById("adminListingFilter");
+    if (adminListingFilter) {
+        adminListingFilter.addEventListener("change", loadAdminListings);
+    }
+
+    const adminListings = document.getElementById("adminListings");
+    if (adminListings) {
+        loadAdminListings();
+        adminListings.addEventListener("click", (e) => {
+            const btn = e.target.closest("button[data-action]");
+            if (!btn) return;
+            moderateListing(btn.dataset.id, btn.dataset.action, "adminListingStatus");
+        });
+    }
+
+    const users = document.getElementById("users");
+    if (users) {
+        loadAdminUsers();
+        users.addEventListener("click", (e) => {
+            const btn = e.target.closest("button[data-user-action]");
+            if (!btn || btn.disabled) return;
+            if (btn.dataset.userAction === "role") {
+                updateUserRole(btn.dataset.id, btn.dataset.role);
+            } else if (btn.dataset.userAction === "status") {
+                updateUserStatus(btn.dataset.id, btn.dataset.active === "true");
+            }
         });
     }
 });

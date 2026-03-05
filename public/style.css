@@ -320,6 +320,13 @@ button:hover,
     box-shadow: 0 8px 14px rgba(0, 74, 191, 0.28);
 }
 
+button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
 .main-btn {
     display: inline-block;
     padding: 11px 18px;

@@ -9,5 +9,6 @@ module.exports = mongoose.model("User", new mongoose.Schema({
         bio: { type: String, default: "", trim: true },
         location: { type: String, default: "", trim: true }
     },
+    isActive: { type: Boolean, default: true },
     role: { type: String, enum: ["user", "admin"], default: "user" }
 }, { timestamps: true }));

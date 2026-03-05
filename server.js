@@ -110,14 +110,17 @@ if (JWT_SECRET === "changeme") {
 }
 
 // Authentication middleware
-const auth = (req, res, next) => {
+const auth = async (req, res, next) => {
     const authHeader = req.headers["authorization"] || "";
     const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
     if (!token) return res.status(401).json({ msg: "No token" });
 
     try {
         const verified = jwt.verify(token, JWT_SECRET);
-        req.user = verified;
+        const user = await User.findById(verified.id).select("_id role isActive");
+        if (!user) return res.status(401).json({ msg: "User not found" });
+        if (user.isActive === false) return res.status(403).json({ msg: "Account suspended" });
+        req.user = { id: String(user._id), role: user.role };
         next();
     } catch (err) {
         res.status(400).json({ msg: "Invalid token" });
@@ -185,6 +188,8 @@ app.post("/api/login", async (req, res) => {
         const user = await User.findOne({ email: String(email).trim().toLowerCase() });
         if (!user) return res.status(400).json({ msg: "Invalid email" });
 
+        if (user.isActive === false) return res.status(403).json({ msg: "Account suspended. Contact admin." });
+
         const match = await bcrypt.compare(password, user.password);
         if (!match) return res.status(400).json({ msg: "Wrong password" });
 
@@ -197,7 +202,8 @@ app.post("/api/login", async (req, res) => {
                 email: user.email,
                 contact: user.contact,
                 profile: user.profile || {},
-                role: user.role
+                role: user.role,
+                isActive: user.isActive !== false
             }
         });
     } catch (err) {
@@ -208,7 +214,7 @@ app.post("/api/login", async (req, res) => {
 /* ---------------- User Profile ---------------- */
 app.get("/api/profile", auth, async (req, res) => {
     try {
-        const user = await User.findById(req.user.id).select("name email contact profile role");
+        const user = await User.findById(req.user.id).select("name email contact profile role isActive");
         if (!user) return res.status(404).json({ msg: "User not found" });
         res.json({
             id: user._id,
@@ -216,7 +222,8 @@ app.get("/api/profile", auth, async (req, res) => {
             email: user.email,
             contact: user.contact || "",
             profile: user.profile || {},
-            role: user.role
+            role: user.role,
+            isActive: user.isActive !== false
         });
     } catch (err) {
         res.status(500).json({ msg: err.message || "Failed to load profile" });
@@ -239,7 +246,7 @@ app.put("/api/profile", auth, async (req, res) => {
         const user = await User.findByIdAndUpdate(
             req.user.id,
             { $set: update },
-            { new: true, runValidators: true, fields: "name email contact profile role" }
+            { new: true, runValidators: true, fields: "name email contact profile role isActive" }
         );
         if (!user) return res.status(404).json({ msg: "User not found" });
 
@@ -251,7 +258,8 @@ app.put("/api/profile", auth, async (req, res) => {
                 email: user.email,
                 contact: user.contact || "",
                 profile: user.profile || {},
-                role: user.role
+                role: user.role,
+                isActive: user.isActive !== false
             }
         });
     } catch (err) {
@@ -317,9 +325,24 @@ app.get("/health", (req, res) => {
 /* ---------------- Admin Pending Listings ---------------- */
 app.get("/api/admin/pending", auth, requireAdmin, async (req, res) => {
     try {
-        const listings = await Listing.find({ status: "pending" }).populate({
+        const listings = await Listing.find({ status: "pending" }).sort({ createdAt: -1 }).populate({
             path: "owner",
-            select: "name email contact profile"
+            select: "name email contact profile role isActive"
+        });
+        res.json(listings);
+    } catch (err) {
+        res.status(500).json({ msg: err.message });
+    }
+});
+
+/* ---------------- Admin All Listings ---------------- */
+app.get("/api/admin/listings", auth, requireAdmin, async (req, res) => {
+    try {
+        const status = String(req.query.status || "all");
+        const query = ["pending", "approved", "rejected"].includes(status) ? { status } : {};
+        const listings = await Listing.find(query).sort({ createdAt: -1 }).populate({
+            path: "owner",
+            select: "name email contact profile role isActive"
         });
         res.json(listings);
     } catch (err) {
@@ -344,6 +367,84 @@ app.post("/api/admin/reject", auth, requireAdmin, async (req, res) => {
         if (!req.body.id) return res.status(400).json({ msg: "Listing id is required" });
         await Listing.findByIdAndUpdate(req.body.id, { status: "rejected" });
         res.json({ msg: "Listing rejected" });
+    } catch (err) {
+        res.status(400).json({ msg: err.message });
+    }
+});
+
+/* ---------------- Admin Take Down Listing ---------------- */
+app.post("/api/admin/takedown", auth, requireAdmin, async (req, res) => {
+    try {
+        if (!req.body.id) return res.status(400).json({ msg: "Listing id is required" });
+        await Listing.findByIdAndUpdate(req.body.id, { status: "rejected" });
+        res.json({ msg: "Listing taken down" });
+    } catch (err) {
+        res.status(400).json({ msg: err.message });
+    }
+});
+
+/* ---------------- Admin Restore Listing ---------------- */
+app.post("/api/admin/restore", auth, requireAdmin, async (req, res) => {
+    try {
+        if (!req.body.id) return res.status(400).json({ msg: "Listing id is required" });
+        await Listing.findByIdAndUpdate(req.body.id, { status: "approved" });
+        res.json({ msg: "Listing restored to approved" });
+    } catch (err) {
+        res.status(400).json({ msg: err.message });
+    }
+});
+
+/* ---------------- Admin Manage Users ---------------- */
+app.get("/api/admin/users", auth, requireAdmin, async (req, res) => {
+    try {
+        const users = await User.find({})
+            .sort({ createdAt: -1 })
+            .select("name email contact profile role isActive createdAt");
+        res.json(users);
+    } catch (err) {
+        res.status(500).json({ msg: err.message });
+    }
+});
+
+app.post("/api/admin/users/role", auth, requireAdmin, async (req, res) => {
+    try {
+        const { id, role } = req.body;
+        if (!id) return res.status(400).json({ msg: "User id is required" });
+        if (!["user", "admin"].includes(role)) {
+            return res.status(400).json({ msg: "Role must be user or admin" });
+        }
+        if (String(id) === String(req.user.id) && role !== "admin") {
+            return res.status(400).json({ msg: "You cannot remove your own admin role" });
+        }
+        const user = await User.findByIdAndUpdate(
+            id,
+            { role },
+            { new: true, runValidators: true, fields: "name email role isActive" }
+        );
+        if (!user) return res.status(404).json({ msg: "User not found" });
+        res.json({ msg: `User role updated to ${user.role}`, user });
+    } catch (err) {
+        res.status(400).json({ msg: err.message });
+    }
+});
+
+app.post("/api/admin/users/status", auth, requireAdmin, async (req, res) => {
+    try {
+        const { id, isActive } = req.body;
+        if (!id) return res.status(400).json({ msg: "User id is required" });
+        if (typeof isActive !== "boolean") {
+            return res.status(400).json({ msg: "isActive must be boolean" });
+        }
+        if (String(id) === String(req.user.id) && !isActive) {
+            return res.status(400).json({ msg: "You cannot suspend your own account" });
+        }
+        const user = await User.findByIdAndUpdate(
+            id,
+            { isActive },
+            { new: true, runValidators: true, fields: "name email role isActive" }
+        );
+        if (!user) return res.status(404).json({ msg: "User not found" });
+        res.json({ msg: `User is now ${user.isActive !== false ? "active" : "suspended"}`, user });
     } catch (err) {
         res.status(400).json({ msg: err.message });
     }
