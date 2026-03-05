@@ -109,6 +109,17 @@ if (JWT_SECRET === "changeme") {
     console.warn("Warning: JWT_SECRET is using the default value. Set JWT_SECRET in your environment.");
 }
 
+function isValidObjectId(id) {
+    return mongoose.Types.ObjectId.isValid(String(id || ""));
+}
+
+async function countActiveAdmins() {
+    return User.countDocuments({
+        role: "admin",
+        $or: [{ isActive: true }, { isActive: { $exists: false } }]
+    });
+}
+
 // Authentication middleware
 const auth = async (req, res, next) => {
     const authHeader = req.headers["authorization"] || "";
@@ -123,7 +134,7 @@ const auth = async (req, res, next) => {
         req.user = { id: String(user._id), role: user.role };
         next();
     } catch (err) {
-        res.status(400).json({ msg: "Invalid token" });
+        res.status(401).json({ msg: "Invalid token" });
     }
 };
 
@@ -339,7 +350,7 @@ app.get("/api/admin/pending", auth, requireAdmin, async (req, res) => {
 app.get("/api/admin/listings", auth, requireAdmin, async (req, res) => {
     try {
         const status = String(req.query.status || "all");
-        const query = ["pending", "approved", "rejected"].includes(status) ? { status } : {};
+        const query = ["pending", "approved", "rejected", "taken_down"].includes(status) ? { status } : {};
         const listings = await Listing.find(query).sort({ createdAt: -1 }).populate({
             path: "owner",
             select: "name email contact profile role isActive"
@@ -353,8 +364,11 @@ app.get("/api/admin/listings", auth, requireAdmin, async (req, res) => {
 /* ---------------- Admin Approve ---------------- */
 app.post("/api/admin/approve", auth, requireAdmin, async (req, res) => {
     try {
-        if (!req.body.id) return res.status(400).json({ msg: "Listing id is required" });
-        await Listing.findByIdAndUpdate(req.body.id, { status: "approved" });
+        const id = req.body.id;
+        if (!id) return res.status(400).json({ msg: "Listing id is required" });
+        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid listing id" });
+        const listing = await Listing.findByIdAndUpdate(id, { status: "approved" }, { new: true });
+        if (!listing) return res.status(404).json({ msg: "Listing not found" });
         res.json({ msg: "Listing approved" });
     } catch (err) {
         res.status(400).json({ msg: err.message });
@@ -364,8 +378,11 @@ app.post("/api/admin/approve", auth, requireAdmin, async (req, res) => {
 /* ---------------- Admin Reject ---------------- */
 app.post("/api/admin/reject", auth, requireAdmin, async (req, res) => {
     try {
-        if (!req.body.id) return res.status(400).json({ msg: "Listing id is required" });
-        await Listing.findByIdAndUpdate(req.body.id, { status: "rejected" });
+        const id = req.body.id;
+        if (!id) return res.status(400).json({ msg: "Listing id is required" });
+        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid listing id" });
+        const listing = await Listing.findByIdAndUpdate(id, { status: "rejected" }, { new: true });
+        if (!listing) return res.status(404).json({ msg: "Listing not found" });
         res.json({ msg: "Listing rejected" });
     } catch (err) {
         res.status(400).json({ msg: err.message });
@@ -375,8 +392,11 @@ app.post("/api/admin/reject", auth, requireAdmin, async (req, res) => {
 /* ---------------- Admin Take Down Listing ---------------- */
 app.post("/api/admin/takedown", auth, requireAdmin, async (req, res) => {
     try {
-        if (!req.body.id) return res.status(400).json({ msg: "Listing id is required" });
-        await Listing.findByIdAndUpdate(req.body.id, { status: "rejected" });
+        const id = req.body.id;
+        if (!id) return res.status(400).json({ msg: "Listing id is required" });
+        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid listing id" });
+        const listing = await Listing.findByIdAndUpdate(id, { status: "taken_down" }, { new: true });
+        if (!listing) return res.status(404).json({ msg: "Listing not found" });
         res.json({ msg: "Listing taken down" });
     } catch (err) {
         res.status(400).json({ msg: err.message });
@@ -386,8 +406,11 @@ app.post("/api/admin/takedown", auth, requireAdmin, async (req, res) => {
 /* ---------------- Admin Restore Listing ---------------- */
 app.post("/api/admin/restore", auth, requireAdmin, async (req, res) => {
     try {
-        if (!req.body.id) return res.status(400).json({ msg: "Listing id is required" });
-        await Listing.findByIdAndUpdate(req.body.id, { status: "approved" });
+        const id = req.body.id;
+        if (!id) return res.status(400).json({ msg: "Listing id is required" });
+        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid listing id" });
+        const listing = await Listing.findByIdAndUpdate(id, { status: "approved" }, { new: true });
+        if (!listing) return res.status(404).json({ msg: "Listing not found" });
         res.json({ msg: "Listing restored to approved" });
     } catch (err) {
         res.status(400).json({ msg: err.message });
@@ -410,18 +433,27 @@ app.post("/api/admin/users/role", auth, requireAdmin, async (req, res) => {
     try {
         const { id, role } = req.body;
         if (!id) return res.status(400).json({ msg: "User id is required" });
+        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid user id" });
         if (!["user", "admin"].includes(role)) {
             return res.status(400).json({ msg: "Role must be user or admin" });
         }
         if (String(id) === String(req.user.id) && role !== "admin") {
             return res.status(400).json({ msg: "You cannot remove your own admin role" });
         }
+        const existingUser = await User.findById(id).select("role isActive");
+        if (!existingUser) return res.status(404).json({ msg: "User not found" });
+        const existingIsActive = existingUser.isActive !== false;
+        if (existingUser.role === "admin" && role !== "admin" && existingIsActive) {
+            const activeAdminCount = await countActiveAdmins();
+            if (activeAdminCount <= 1) {
+                return res.status(400).json({ msg: "Cannot remove the last active admin" });
+            }
+        }
         const user = await User.findByIdAndUpdate(
             id,
             { role },
             { new: true, runValidators: true, fields: "name email role isActive" }
         );
-        if (!user) return res.status(404).json({ msg: "User not found" });
         res.json({ msg: `User role updated to ${user.role}`, user });
     } catch (err) {
         res.status(400).json({ msg: err.message });
@@ -432,18 +464,27 @@ app.post("/api/admin/users/status", auth, requireAdmin, async (req, res) => {
     try {
         const { id, isActive } = req.body;
         if (!id) return res.status(400).json({ msg: "User id is required" });
+        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid user id" });
         if (typeof isActive !== "boolean") {
             return res.status(400).json({ msg: "isActive must be boolean" });
         }
         if (String(id) === String(req.user.id) && !isActive) {
             return res.status(400).json({ msg: "You cannot suspend your own account" });
         }
+        const existingUser = await User.findById(id).select("role isActive");
+        if (!existingUser) return res.status(404).json({ msg: "User not found" });
+        const existingIsActive = existingUser.isActive !== false;
+        if (existingUser.role === "admin" && existingIsActive && !isActive) {
+            const activeAdminCount = await countActiveAdmins();
+            if (activeAdminCount <= 1) {
+                return res.status(400).json({ msg: "Cannot suspend the last active admin" });
+            }
+        }
         const user = await User.findByIdAndUpdate(
             id,
             { isActive },
             { new: true, runValidators: true, fields: "name email role isActive" }
         );
-        if (!user) return res.status(404).json({ msg: "User not found" });
         res.json({ msg: `User is now ${user.isActive !== false ? "active" : "suspended"}`, user });
     } catch (err) {
         res.status(400).json({ msg: err.message });

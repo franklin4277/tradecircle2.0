@@ -106,6 +106,12 @@ function formatDateTime(value) {
     return dt.toLocaleString();
 }
 
+function formatStatusLabel(status) {
+    return String(status || "")
+        .replace(/_/g, " ")
+        .replace(/\b\w/g, (m) => m.toUpperCase());
+}
+
 function buildProductCard(item) {
     const sellerPhone = item.owner?.contact ? escapeHtml(item.owner.contact) : "Not provided";
     const fallbackEmail = item.owner?.email ? escapeHtml(item.owner.email) : "N/A";
@@ -463,58 +469,6 @@ async function search() {
     }
 }
 
-async function loadPendingListings() {
-    const container = document.getElementById("pending");
-    if (!container) return;
-    if (!requireAuth()) return;
-
-    const role = localStorage.getItem("role");
-    if (role !== "admin") {
-        container.innerHTML = "<p>Admin access required.</p>";
-        return;
-    }
-
-    container.innerHTML = "<p>Loading pending listings...</p>";
-    try {
-        const res = await fetch("/api/admin/pending", {
-            headers: authHeaders()
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.msg || "Failed to fetch pending listings");
-
-        container.innerHTML = "";
-        if (!Array.isArray(data) || data.length === 0) {
-            container.innerHTML = "<p>No pending listings.</p>";
-            return;
-        }
-
-        data.forEach(item => {
-            const safeContactLink = sanitizeContactLink(item.contactLink);
-            const adminContactLink = safeContactLink
-                ? `<a href="${escapeHtml(safeContactLink)}" target="_blank" rel="noopener noreferrer">Open Contact Link</a>`
-                : "Not provided";
-            const card = document.createElement("article");
-            card.className = "card";
-            card.innerHTML = `
-                <h4>${escapeHtml(item.title)}</h4>
-                <p>${escapeHtml(item.description)}</p>
-                <p><strong>Ksh ${escapeHtml(item.price)}</strong></p>
-                <p><strong>Category:</strong> ${escapeHtml(item.category || "Other")} | <strong>Location:</strong> ${escapeHtml(item.location || "All Kenya")}</p>
-                <p><strong>Contact Platform:</strong> ${escapeHtml(item.contactPlatform || "Phone")}</p>
-                <p><strong>Contact Link:</strong> ${adminContactLink}</p>
-                <p>Owner: ${escapeHtml(item.owner?.name || "Unknown")} | Phone: ${escapeHtml(item.owner?.contact || "N/A")} | Email: ${escapeHtml(item.owner?.email || "N/A")}</p>
-                <div class="row-actions">
-                    <button data-action="approve" data-id="${escapeHtml(item._id)}">Approve</button>
-                    <button class="btn-danger" data-action="reject" data-id="${escapeHtml(item._id)}">Reject</button>
-                </div>
-            `;
-            container.appendChild(card);
-        });
-    } catch (err) {
-        container.innerHTML = `<p>${escapeHtml(err.message || "Failed to load pending listings.")}</p>`;
-    }
-}
-
 async function moderateListing(id, action, statusTarget = "adminStatus") {
     const endpointMap = {
         approve: "/api/admin/approve",
@@ -534,7 +488,6 @@ async function moderateListing(id, action, statusTarget = "adminStatus") {
         const data = await res.json();
         if (!res.ok) throw new Error(data.msg || `Failed to ${action} listing`);
         setStatus(statusTarget, data.msg || `Listing ${action}d`, false);
-        await loadPendingListings();
         await loadAdminListings();
     } catch (err) {
         setStatus(statusTarget, err.message || `Failed to ${action} listing`, true);
@@ -596,7 +549,7 @@ async function loadAdminListings() {
                 actions.push(`<button class="btn-danger" data-action="reject" data-id="${escapeHtml(item._id)}">Reject</button>`);
             } else if (status === "approved") {
                 actions.push(`<button class="btn-danger" data-action="takedown" data-id="${escapeHtml(item._id)}">Take Down</button>`);
-            } else if (status === "rejected") {
+            } else if (status === "rejected" || status === "taken_down") {
                 actions.push(`<button data-action="restore" data-id="${escapeHtml(item._id)}">Restore</button>`);
             }
 
@@ -606,7 +559,7 @@ async function loadAdminListings() {
                 <h4>${escapeHtml(item.title)}</h4>
                 <p>${escapeHtml(item.description)}</p>
                 <p><strong>Ksh ${escapeHtml(item.price)}</strong></p>
-                <p><strong>Status:</strong> ${escapeHtml(status)}</p>
+                <p><strong>Status:</strong> ${escapeHtml(formatStatusLabel(status))}</p>
                 <p><strong>Category:</strong> ${escapeHtml(item.category || "Other")} | <strong>Location:</strong> ${escapeHtml(item.location || "All Kenya")}</p>
                 <p><strong>Contact Platform:</strong> ${escapeHtml(item.contactPlatform || "Phone")}</p>
                 <p><strong>Contact Link:</strong> ${adminContactLink}</p>
@@ -781,16 +734,6 @@ document.addEventListener("DOMContentLoaded", () => {
         searchLocation.innerHTML = MARKET_LOCATIONS.map(l => `<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join("");
     }
 
-    const pending = document.getElementById("pending");
-    if (pending) {
-        loadPendingListings();
-        pending.addEventListener("click", (e) => {
-            const btn = e.target.closest("button[data-action]");
-            if (!btn) return;
-            moderateListing(btn.dataset.id, btn.dataset.action);
-        });
-    }
-
     const adminListingFilter = document.getElementById("adminListingFilter");
     if (adminListingFilter) {
         adminListingFilter.addEventListener("change", loadAdminListings);
@@ -802,7 +745,14 @@ document.addEventListener("DOMContentLoaded", () => {
         adminListings.addEventListener("click", (e) => {
             const btn = e.target.closest("button[data-action]");
             if (!btn) return;
-            moderateListing(btn.dataset.id, btn.dataset.action, "adminListingStatus");
+            const actionLabels = {
+                approve: "approve this listing",
+                reject: "reject this listing",
+                takedown: "take down this listing",
+                restore: "restore this listing"
+            };
+            if (!window.confirm(`Are you sure you want to ${actionLabels[btn.dataset.action] || "update this listing"}?`)) return;
+            moderateListing(btn.dataset.id, btn.dataset.action, "adminStatus");
         });
     }
 
@@ -813,8 +763,10 @@ document.addEventListener("DOMContentLoaded", () => {
             const btn = e.target.closest("button[data-user-action]");
             if (!btn || btn.disabled) return;
             if (btn.dataset.userAction === "role") {
+                if (!window.confirm("Are you sure you want to change this user's role?")) return;
                 updateUserRole(btn.dataset.id, btn.dataset.role);
             } else if (btn.dataset.userAction === "status") {
+                if (!window.confirm("Are you sure you want to change this user's account status?")) return;
                 updateUserStatus(btn.dataset.id, btn.dataset.active === "true");
             }
         });

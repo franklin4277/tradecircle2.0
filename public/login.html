@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Secure login for TradeCircle sellers and administrators.">
     <title>Login - TradeCircle</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -10,14 +11,16 @@
 <nav class="topbar">
     <a class="brand" href="index.html">TradeCircle</a>
     <div class="top-links">
+        <a href="landingpage.html">About</a>
         <a href="register.html" class="pill-link">Create Account</a>
     </div>
 </nav>
 
-<div class="container auth-shell">
+<main class="container auth-shell auth-shell-wide">
     <section class="auth-card">
         <p class="eyebrow">Welcome Back</p>
-        <h2 class="centered-title">Login</h2>
+        <h2 class="centered-title">Login to your account</h2>
+        <p class="tiny-meta">Access your listings, profile, and moderation tools.</p>
         <form id="loginForm" class="auth-form" novalidate>
             <label for="loginEmail">Email</label>
             <input type="email" id="loginEmail" placeholder="Email" autocomplete="email" required>
@@ -30,7 +33,24 @@
             <a href="register.html">Don't have an account? Register</a>
         </p>
     </section>
-</div>
+
+    <aside class="panel info-panel">
+        <p class="eyebrow">Why Sellers Choose TradeCircle</p>
+        <h3>Simple tools, faster deals</h3>
+        <ul class="feature-list">
+            <li>Post listings with image and contact channels</li>
+            <li>Get discovered with location and category filters</li>
+            <li>Keep your profile and contact details updated</li>
+        </ul>
+    </aside>
+</main>
+
+<footer class="site-footer">
+    <div class="container footer-inner">
+        <p>New to TradeCircle?</p>
+        <a href="register.html">Create your account</a>
+    </div>
+</footer>
 
 <script src="script.js"></script>
 </body>

@@ -3,19 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Seller dashboard for creating listings, setting contact options, and searching marketplace results.">
     <title>Dashboard - TradeCircle</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <nav class="topbar">
-    <a class="brand" href="index.html">TradeCircle Seller</a>
+    <a class="brand" href="index.html">TradeCircle Seller Hub</a>
     <div class="top-links">
+        <a href="index.html">Marketplace</a>
         <a href="profile.html" class="pill-link">Profile</a>
         <button class="logout-btn" onclick="logout()" type="button">Logout</button>
     </div>
 </nav>
 
-<main class="container market-layout">
+<main class="container page-flow">
+    <section class="panel page-banner">
+        <p class="eyebrow">Seller Workspace</p>
+        <h3>Manage listings and respond faster</h3>
+        <p class="hero-copy">Create listings with complete contact details, then browse current marketplace supply to price competitively.</p>
+    </section>
+
+    <section class="market-layout">
     <section class="panel">
         <p class="eyebrow">Seller Tools</p>
         <h3>Add Listing</h3>
@@ -60,7 +69,15 @@
         <p class="tiny-meta" id="searchCount">0 results</p>
         <div id="results"></div>
     </section>
+    </section>
 </main>
+
+<footer class="site-footer">
+    <div class="container footer-inner">
+        <p>Keep your profile updated to improve buyer trust.</p>
+        <a href="profile.html">Edit Profile</a>
+    </div>
+</footer>
 
 <script src="script.js"></script>
 </body>

@@ -14,5 +14,5 @@ module.exports = mongoose.model("Listing", new mongoose.Schema({
     contactLink: { type: String, default: "", trim: true },
     picture: String, // URL or filename
     owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" }
+    status: { type: String, enum: ["pending", "approved", "rejected", "taken_down"], default: "pending" }
 }, { timestamps: true }));

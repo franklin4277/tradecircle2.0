@@ -3,19 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Update your TradeCircle profile details to improve listing credibility and response rates.">
     <title>Profile - TradeCircle</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <nav class="topbar">
-    <a class="brand" href="dashboard.html">TradeCircle Seller</a>
+    <a class="brand" href="dashboard.html">TradeCircle Seller Hub</a>
     <div class="top-links">
+        <a href="index.html">Marketplace</a>
         <a href="dashboard.html" class="pill-link">Dashboard</a>
         <button class="logout-btn" onclick="logout()" type="button">Logout</button>
     </div>
 </nav>
 
-<main class="container">
+<main class="container page-flow">
+    <section class="panel page-banner">
+        <p class="eyebrow">Profile</p>
+        <h3>Build buyer confidence</h3>
+        <p class="hero-copy">Keep your profile complete and accurate so buyers can trust and contact you quickly.</p>
+    </section>
+
+    <section class="market-layout">
     <section class="panel">
         <p class="eyebrow">Account</p>
         <h3>User Profile</h3>
@@ -32,7 +41,25 @@
         </form>
         <p id="profileStatus" class="status" aria-live="polite"></p>
     </section>
+
+    <aside class="panel info-panel">
+        <p class="eyebrow">Checklist</p>
+        <h3>High-trust profile basics</h3>
+        <ul class="feature-list">
+            <li>Use a reachable phone number</li>
+            <li>Set your real trading location</li>
+            <li>Explain what you usually sell</li>
+        </ul>
+    </aside>
+    </section>
 </main>
+
+<footer class="site-footer">
+    <div class="container footer-inner">
+        <p>Done updating profile?</p>
+        <a href="dashboard.html">Back to Dashboard</a>
+    </div>
+</footer>
 
 <script src="script.js"></script>
 </body>

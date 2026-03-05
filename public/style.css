@@ -4,6 +4,7 @@
     --blue-900: #00367a;
     --blue-700: #0052cc;
     --blue-600: #0a66ff;
+    --blue-500: #2a7bff;
     --blue-100: #eaf2ff;
     --white: #ffffff;
     --ink: #1b2a41;
@@ -61,6 +62,17 @@ nav h2 {
     gap: 10px;
 }
 
+.page-flow {
+    display: grid;
+    gap: 16px;
+}
+
+.page-banner {
+    background:
+        radial-gradient(circle at 100% 0%, rgba(10, 102, 255, 0.12), transparent 45%),
+        linear-gradient(180deg, #ffffff 0%, #f4f8ff 100%);
+}
+
 nav a,
 .top-links a {
     color: var(--white);
@@ -85,6 +97,15 @@ nav a:hover,
     margin: 26px auto;
 }
 
+.admin-stack {
+    display: grid;
+    gap: 16px;
+}
+
+.admin-filter-row {
+    max-width: 260px;
+}
+
 .market-hero {
     display: grid;
     grid-template-columns: 1.5fr 1fr;
@@ -94,6 +115,13 @@ nav a:hover,
     border-radius: 18px;
     box-shadow: var(--shadow);
     padding: 28px;
+}
+
+.hero-actions {
+    margin-top: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
 }
 
 .eyebrow {
@@ -139,6 +167,33 @@ nav a:hover,
     padding-left: 20px;
     color: var(--muted);
     line-height: 1.7;
+}
+
+.feature-grid {
+    display: grid;
+    gap: 12px;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.feature-card {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fbfdff;
+    padding: 14px;
+}
+
+.feature-card h4 {
+    margin: 0 0 8px;
+    color: var(--blue-900);
+}
+
+.feature-card p {
+    margin: 0;
+    color: var(--muted);
+}
+
+.cta-panel {
+    text-align: left;
 }
 
 .chip-row {
@@ -242,9 +297,19 @@ nav a:hover,
     place-items: center;
 }
 
+.auth-shell-wide {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);
+    align-items: stretch;
+    gap: 16px;
+}
+
 .auth-card {
     width: min(520px, 100%);
     box-shadow: var(--shadow);
+}
+
+.info-panel {
+    align-self: stretch;
 }
 
 .centered-title {
@@ -334,6 +399,18 @@ button:disabled {
     margin-top: 16px;
 }
 
+.ghost-btn {
+    background: transparent;
+    color: var(--blue-700);
+    border: 1px solid #8fb4ff;
+    box-shadow: none;
+}
+
+.ghost-btn:hover {
+    background: #eef4ff;
+    color: var(--blue-900);
+}
+
 .logout-btn {
     width: auto;
     border-radius: 999px;
@@ -365,6 +442,7 @@ button:disabled {
 .row-actions {
     display: flex;
     gap: 10px;
+    flex-wrap: wrap;
     margin-top: 10px;
 }
 
@@ -489,6 +567,31 @@ button:disabled {
     font-weight: 700;
 }
 
+.site-footer {
+    margin-top: 26px;
+    border-top: 1px solid #d7e6ff;
+    background: #f6faff;
+}
+
+.footer-inner {
+    min-height: 64px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    color: var(--muted);
+    font-weight: 700;
+}
+
+.footer-inner a {
+    color: var(--blue-700);
+    text-decoration: none;
+}
+
+.footer-inner a:hover {
+    text-decoration: underline;
+}
+
 @media (max-width: 900px) {
     .market-hero,
     .market-layout {
@@ -515,5 +618,16 @@ button:disabled {
 
     .search-row {
         grid-template-columns: 1fr;
+    }
+
+    .auth-shell-wide {
+        grid-template-columns: 1fr;
+    }
+
+    .footer-inner {
+        flex-direction: column;
+        align-items: flex-start;
+        justify-content: center;
+        padding-block: 10px;
     }
 }
