@@ -35,6 +35,11 @@ const useCloudinary = !!(
     cloudinaryConfig.apiKey &&
     cloudinaryConfig.apiSecret
 );
+const isProduction = process.env.NODE_ENV === "production";
+
+if (isProduction && !useCloudinary) {
+    console.warn("Cloudinary is not configured in production. Image uploads will be blocked until CLOUDINARY_* vars are set.");
+}
 
 async function uploadToCloudinary(file) {
     const timestamp = Math.floor(Date.now() / 1000);
@@ -260,6 +265,11 @@ app.post("/api/listing", auth, upload.single("picture"), async (req, res) => {
         const { title, price, description, category, location, contactPlatform, contactLink } = req.body;
         if (!title || !price || !description) {
             return res.status(400).json({ msg: "Title, price, and description are required" });
+        }
+        if (req.file && isProduction && !useCloudinary) {
+            return res.status(503).json({
+                msg: "Image upload is disabled until Cloudinary is configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET."
+            });
         }
         let picture;
         if (req.file) {

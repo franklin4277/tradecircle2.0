@@ -47,5 +47,6 @@ This repo includes `render.yaml`, so Render can auto-detect the settings.
 
 - `.env` is ignored by git. Keep secrets out of GitHub.
 - On Render, local `uploads/` files are not persistent. Cloudinary vars above make image URLs persistent across sleep/redeploy.
+- In `NODE_ENV=production`, this app now blocks image upload when Cloudinary vars are missing to prevent disappearing images.
 - If Git is not installed on Windows:
   - `winget install --id Git.Git -e --source winget`
