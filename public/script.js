@@ -79,10 +79,33 @@ function logout() {
     window.location.href = "index.html";
 }
 
+function normalizeContactLink(link) {
+    const value = String(link || "").trim();
+    if (!value) return "";
+    if (/^https?:\/\//i.test(value)) return value;
+    return `https://${value}`;
+}
+
+function sanitizeContactLink(link) {
+    const normalized = normalizeContactLink(link);
+    if (!normalized) return "";
+    try {
+        const parsed = new URL(normalized);
+        if (!["http:", "https:"].includes(parsed.protocol)) return "";
+        return parsed.toString();
+    } catch (err) {
+        return "";
+    }
+}
+
 function buildProductCard(item) {
     const sellerPhone = item.owner?.contact ? escapeHtml(item.owner.contact) : "Not provided";
     const fallbackEmail = item.owner?.email ? escapeHtml(item.owner.email) : "N/A";
     const contactPlatform = escapeHtml(item.contactPlatform || "Phone");
+    const safeContactLink = sanitizeContactLink(item.contactLink);
+    const contactLinkHtml = safeContactLink
+        ? `<a href="${escapeHtml(safeContactLink)}" target="_blank" rel="noopener noreferrer">Open Contact Link</a>`
+        : "Not provided";
     return `
         <img src="${item.picture ? escapeHtml(item.picture) : "https://via.placeholder.com/220x160?text=No+Image"}" alt="${escapeHtml(item.title)}">
         <div class="badge-row">
@@ -96,7 +119,8 @@ function buildProductCard(item) {
             <strong>Seller:</strong> ${escapeHtml(item.owner?.name || "Unknown")}<br>
             <strong>Platform:</strong> ${contactPlatform}<br>
             <strong>Phone:</strong> ${sellerPhone}<br>
-            <strong>Email:</strong> ${fallbackEmail}
+            <strong>Email:</strong> ${fallbackEmail}<br>
+            <strong>Link:</strong> ${contactLinkHtml}
         </div>
     `;
 }
@@ -366,6 +390,7 @@ async function submitListing(event) {
     const category = document.getElementById("category")?.value || "Other";
     const location = document.getElementById("location")?.value.trim() || "All Kenya";
     const contactPlatform = document.getElementById("contactPlatform")?.value || "Phone";
+    const contactLink = document.getElementById("contactLink")?.value.trim() || "";
     const picture = document.getElementById("picture")?.files?.[0];
 
     if (!title || !price || !description) {
@@ -380,6 +405,7 @@ async function submitListing(event) {
     formData.append("category", category);
     formData.append("location", location);
     formData.append("contactPlatform", contactPlatform);
+    formData.append("contactLink", contactLink);
     if (picture) formData.append("picture", picture);
 
     try {
@@ -451,6 +477,10 @@ async function loadPendingListings() {
         }
 
         data.forEach(item => {
+            const safeContactLink = sanitizeContactLink(item.contactLink);
+            const adminContactLink = safeContactLink
+                ? `<a href="${escapeHtml(safeContactLink)}" target="_blank" rel="noopener noreferrer">Open Contact Link</a>`
+                : "Not provided";
             const card = document.createElement("article");
             card.className = "card";
             card.innerHTML = `
@@ -459,6 +489,7 @@ async function loadPendingListings() {
                 <p><strong>Ksh ${escapeHtml(item.price)}</strong></p>
                 <p><strong>Category:</strong> ${escapeHtml(item.category || "Other")} | <strong>Location:</strong> ${escapeHtml(item.location || "All Kenya")}</p>
                 <p><strong>Contact Platform:</strong> ${escapeHtml(item.contactPlatform || "Phone")}</p>
+                <p><strong>Contact Link:</strong> ${adminContactLink}</p>
                 <p>Owner: ${escapeHtml(item.owner?.name || "Unknown")} | Phone: ${escapeHtml(item.owner?.contact || "N/A")} | Email: ${escapeHtml(item.owner?.email || "N/A")}</p>
                 <div class="row-actions">
                     <button data-action="approve" data-id="${escapeHtml(item._id)}">Approve</button>

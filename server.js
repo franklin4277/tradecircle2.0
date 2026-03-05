@@ -257,7 +257,7 @@ app.put("/api/profile", auth, async (req, res) => {
 /* ---------------- Add Listing ---------------- */
 app.post("/api/listing", auth, upload.single("picture"), async (req, res) => {
     try {
-        const { title, price, description, category, location, contactPlatform } = req.body;
+        const { title, price, description, category, location, contactPlatform, contactLink } = req.body;
         if (!title || !price || !description) {
             return res.status(400).json({ msg: "Title, price, and description are required" });
         }
@@ -274,6 +274,7 @@ app.post("/api/listing", auth, upload.single("picture"), async (req, res) => {
             category: category ? String(category).trim() : "Other",
             location: location ? String(location).trim() : "All Kenya",
             contactPlatform: contactPlatform ? String(contactPlatform).trim() : "Phone",
+            contactLink: contactLink ? String(contactLink).trim() : "",
             picture,
             status: "pending",
             owner: req.user && req.user.id ? req.user.id : undefined

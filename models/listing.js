@@ -11,6 +11,7 @@ module.exports = mongoose.model("Listing", new mongoose.Schema({
         enum: ["Phone", "WhatsApp", "Telegram", "Email", "SMS", "Other"],
         default: "Phone"
     },
+    contactLink: { type: String, default: "", trim: true },
     picture: String, // URL or filename
     owner: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
     status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" }
