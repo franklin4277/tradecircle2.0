@@ -127,7 +127,10 @@ function getListingSellerId(listing) {
         return "";
     }
     const seller = listing.seller || listing.owner;
-    return seller ? String(seller) : "";
+    if (!seller) {
+        return "";
+    }
+    return String(seller._id || seller.id || seller);
 }
 
 function normalizeMessageSenderId(message) {
@@ -452,6 +455,75 @@ router.get("/inbox", auth, async (req, res, next) => {
             threads,
             unreadTotal
         });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.get("/conversations", auth, async (req, res, next) => {
+    try {
+        const buyerId = String(req.user.id);
+        const listings = await Listing.find({
+            "messages.sender": buyerId
+        })
+            .select("title image location status availability messages updatedAt seller owner")
+            .populate("seller", "name")
+            .populate("owner", "name")
+            .sort({ updatedAt: -1 })
+            .limit(200);
+
+        const threads = listings
+            .map((listing) => {
+                ensureListingSeller(listing);
+                const sellerId = getListingSellerId(listing);
+                if (!sellerId || sellerId === buyerId) {
+                    return null;
+                }
+
+                const messages = Array.isArray(listing.messages) ? listing.messages : [];
+                const conversation = messages.filter((message) => {
+                    const senderId = normalizeMessageSenderId(message);
+                    return senderId === buyerId || senderId === sellerId;
+                });
+                if (!conversation.length) {
+                    return null;
+                }
+
+                const buyerSentCount = conversation.filter(
+                    (message) => normalizeMessageSenderId(message) === buyerId
+                ).length;
+                if (buyerSentCount === 0) {
+                    return null;
+                }
+
+                const lastMessage = conversation[conversation.length - 1];
+                const sellerName =
+                    (listing.seller && listing.seller.name) ||
+                    (listing.owner && listing.owner.name) ||
+                    "Seller";
+
+                return {
+                    listingId: String(listing._id),
+                    title: listing.title,
+                    image: listing.image,
+                    location: listing.location,
+                    status: listing.status,
+                    availability: listing.availability,
+                    totalMessages: conversation.length,
+                    sellerName,
+                    lastMessage: {
+                        body: lastMessage.body || "",
+                        type: lastMessage.type || "message",
+                        createdAt: lastMessage.createdAt || listing.updatedAt,
+                        fromSeller: normalizeMessageSenderId(lastMessage) === sellerId,
+                        senderName: lastMessage.senderName || ""
+                    }
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt));
+
+        return res.json({ threads });
     } catch (error) {
         return next(error);
     }
@@ -1017,15 +1089,18 @@ router.get("/:id/messages", auth, requireCommunityVerified, async (req, res, nex
             }
         }
 
+        const sellerId = getListingSellerId(listing);
         const messages = isSeller
             ? listing.messages
-            : listing.messages.filter(
-                  (msg) => normalizeMessageSenderId(msg) === req.user.id
-              );
+            : listing.messages.filter((msg) => {
+                  const senderId = normalizeMessageSenderId(msg);
+                  return senderId === req.user.id || senderId === sellerId;
+              });
 
         return res.json({
             messages,
-            isSeller
+            isSeller,
+            canReply: isSeller || hasConversation
         });
     } catch (error) {
         return next(error);

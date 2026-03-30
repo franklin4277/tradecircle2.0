@@ -267,22 +267,14 @@
 
         const syncToggleState = () => {
             const mobileOpen = navInner.classList.contains("menu-open");
-            const desktopCollapsed = navInner.classList.contains("menu-collapsed");
             const isMobile = isMobileViewport();
-            const expanded = isMobile ? mobileOpen : !desktopCollapsed;
-            const activeIcon = isMobile ? mobileOpen : desktopCollapsed;
 
-            toggle.classList.toggle("is-open", activeIcon);
-            toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+            toggle.style.display = isMobile ? "inline-flex" : "none";
+            toggle.classList.toggle("is-open", isMobile && mobileOpen);
+            toggle.setAttribute("aria-expanded", isMobile && mobileOpen ? "true" : "false");
             toggle.setAttribute(
                 "aria-label",
-                isMobile
-                    ? expanded
-                        ? "Close menu"
-                        : "Open menu"
-                    : expanded
-                    ? "Collapse desktop menu"
-                    : "Expand desktop menu"
+                isMobile && mobileOpen ? "Close menu" : "Open menu"
             );
         };
 
@@ -290,13 +282,11 @@
         syncToggleState();
 
         toggle.addEventListener("click", () => {
-            if (isMobileViewport()) {
-                navInner.classList.toggle("menu-open");
-                navInner.classList.remove("menu-collapsed");
-            } else {
-                navInner.classList.toggle("menu-collapsed");
-                navInner.classList.remove("menu-open");
+            if (!isMobileViewport()) {
+                return;
             }
+
+            navInner.classList.toggle("menu-open");
             syncToggleState();
         });
 
@@ -326,12 +316,10 @@
         });
 
         window.addEventListener("resize", () => {
-            if (isMobileViewport()) {
-                navInner.classList.remove("menu-collapsed");
-                navInner.classList.remove("menu-open");
-            } else {
+            if (!isMobileViewport()) {
                 navInner.classList.remove("menu-open");
             }
+            navInner.classList.remove("menu-collapsed");
             syncToggleState();
         });
 
@@ -1265,6 +1253,7 @@
         const refreshBtn = document.getElementById("refreshListingsBtn");
         const sellerInbox = document.getElementById("sellerInbox");
         const inboxBadge = document.getElementById("inboxBadge");
+        const buyerConversations = document.getElementById("buyerConversations");
         const escrowDeals = document.getElementById("escrowDeals");
         const walletTransactions = document.getElementById("walletTransactions");
         const walletTopupForm = document.getElementById("walletTopupForm");
@@ -1331,6 +1320,7 @@
             );
         }
         await loadSellerInbox(sellerInbox, inboxBadge);
+        await loadBuyerConversations(buyerConversations);
         await loadEscrowDeals(escrowDeals);
         await loadWalletTransactions(walletTransactions);
         await loadNotifications(notificationList, notificationBadge);
@@ -1409,6 +1399,7 @@
                 if (action === "view-messages") {
                     await loadListingMessages(listingId, true);
                     await loadSellerInbox(sellerInbox, inboxBadge);
+                    await loadBuyerConversations(buyerConversations);
                 }
 
                 if (action === "mark-available") {
@@ -1430,6 +1421,7 @@
                     await removeListing(listingId);
                     await loadMyListings(myListings);
                     await loadSellerInbox(sellerInbox, inboxBadge);
+                    await loadBuyerConversations(buyerConversations);
                     await loadEscrowDeals(escrowDeals);
                 }
             } catch (error) {
@@ -1447,6 +1439,7 @@
                 }
                 await loadMyListings(myListings);
                 await loadSellerInbox(sellerInbox, inboxBadge);
+                await loadBuyerConversations(buyerConversations);
                 await loadEscrowDeals(escrowDeals);
                 await loadWalletTransactions(walletTransactions);
                 await loadNotifications(notificationList, notificationBadge);
@@ -1468,6 +1461,27 @@
                 try {
                     await loadListingMessages(listingId, true);
                     await loadSellerInbox(sellerInbox, inboxBadge);
+                    await loadBuyerConversations(buyerConversations);
+                } catch (error) {
+                    showToast(error.message || "Unable to open conversation.", "error");
+                }
+            });
+        }
+
+        if (buyerConversations) {
+            buyerConversations.addEventListener("click", async (event) => {
+                const button = event.target.closest("button[data-action='open-thread']");
+                if (!button) {
+                    return;
+                }
+                const listingId = button.dataset.id;
+                if (!listingId) {
+                    return;
+                }
+
+                try {
+                    await loadListingMessages(listingId, false);
+                    await loadBuyerConversations(buyerConversations);
                 } catch (error) {
                     showToast(error.message || "Unable to open conversation.", "error");
                 }
@@ -1494,8 +1508,43 @@
                     await loadListingMessages(listingId, true);
                     await loadMyListings(myListings);
                     await loadNotifications(notificationList, notificationBadge);
+                    await loadBuyerConversations(buyerConversations);
                 } catch (error) {
                     showToast(error.message || "Offer decision failed.", "error");
+                }
+            });
+
+            messagePanel.addEventListener("submit", async (event) => {
+                const form = event.target.closest("form[data-reply-form]");
+                if (!form) {
+                    return;
+                }
+                event.preventDefault();
+
+                const listingId = String(form.dataset.listingId || "").trim();
+                const input = form.querySelector("textarea[name='replyMessage']");
+                const message = String((input && input.value) || "").trim();
+
+                if (!listingId) {
+                    showToast("Listing thread is missing.", "error");
+                    return;
+                }
+                if (message.length < 2) {
+                    showToast("Reply must have at least 2 characters.", "error");
+                    return;
+                }
+
+                try {
+                    await sendConversationReply(listingId, message);
+                    if (input) {
+                        input.value = "";
+                    }
+                    await loadListingMessages(listingId, false);
+                    await loadSellerInbox(sellerInbox, inboxBadge);
+                    await loadBuyerConversations(buyerConversations);
+                    await loadNotifications(notificationList, notificationBadge);
+                } catch (error) {
+                    showToast(error.message || "Unable to send reply.", "error");
                 }
             });
         }
@@ -1520,6 +1569,7 @@
                     await loadEscrowDeals(escrowDeals);
                     await loadWalletTransactions(walletTransactions);
                     await loadMyListings(myListings);
+                    await loadBuyerConversations(buyerConversations);
                 } catch (error) {
                     showToast(error.message || "Escrow action failed.", "error");
                 }
@@ -1635,6 +1685,70 @@
                 `;
             })
             .join("");
+    }
+
+    async function loadBuyerConversations(container) {
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = "<p class=\"empty-state\">Loading your conversations...</p>";
+
+        const data = await apiRequest("/listings/conversations", {}, true);
+        const threads = Array.isArray(data.threads) ? data.threads : [];
+
+        if (threads.length === 0) {
+            container.innerHTML = "<p class=\"empty-state\">No conversations yet. Message a seller to start chatting.</p>";
+            return;
+        }
+
+        container.innerHTML = threads
+            .map((thread) => {
+                const lastBody = thread.lastMessage && thread.lastMessage.body ? thread.lastMessage.body : "";
+                const lastTime =
+                    thread.lastMessage && thread.lastMessage.createdAt
+                        ? formatRelativeTime(thread.lastMessage.createdAt)
+                        : "recent";
+                const lastDirection =
+                    thread.lastMessage && thread.lastMessage.fromSeller ? "Seller replied" : "You sent";
+
+                return `
+                    <article class="inbox-item">
+                        <div class="inbox-top">
+                            <p class="inbox-title">${escapeHtml(thread.title || "Listing")}</p>
+                            <div class="meta-chips">
+                                <span class="chip">${escapeHtml(thread.availability || "available")}</span>
+                            </div>
+                        </div>
+                        <p class="inbox-meta">Seller: ${escapeHtml(thread.sellerName || "Seller")} · ${escapeHtml(
+                    thread.location || "Unknown location"
+                )}</p>
+                        <p class="inbox-meta">${escapeHtml(lastDirection)} · ${escapeHtml(lastTime)}</p>
+                        <p class="card-hint">${escapeHtml(truncate(lastBody, 120))}</p>
+                        <div class="card-actions">
+                            <button class="btn btn-secondary" type="button" data-action="open-thread" data-id="${escapeHtml(
+                                thread.listingId
+                            )}">
+                                Open Conversation
+                            </button>
+                        </div>
+                    </article>
+                `;
+            })
+            .join("");
+    }
+
+    async function sendConversationReply(listingId, message) {
+        const response = await apiRequest(
+            `/listings/${listingId}/messages`,
+            {
+                method: "POST",
+                body: { message }
+            },
+            true
+        );
+
+        showToast(response.message || "Reply sent.", "success");
     }
 
     async function loadNotifications(container, badgeElement) {
@@ -2050,6 +2164,7 @@
         const data = await apiRequest(`/listings/${listingId}/messages`, {}, true);
         const messages = Array.isArray(data.messages) ? data.messages : [];
         const isSeller = !!data.isSeller;
+        const canReply = !!data.canReply;
 
         if (markReadForSeller) {
             try {
@@ -2070,7 +2185,7 @@
             return;
         }
 
-        panel.innerHTML = messages
+        const messageHtml = messages
             .map((message) => {
                 const senderName =
                     (message.sender && message.sender.name) || message.senderName || "Marketplace user";
@@ -2147,6 +2262,32 @@
                 `;
             })
             .join("");
+
+        const replyBox = canReply
+            ? `
+                <form class="message-reply-form" data-reply-form data-listing-id="${escapeHtml(listingId)}">
+                    <label class="message-reply-label">
+                        Send Reply
+                        <textarea
+                            name="replyMessage"
+                            rows="3"
+                            maxlength="500"
+                            placeholder="${escapeHtml(
+                                isSeller
+                                    ? "Reply to the buyer..."
+                                    : "Reply to the seller..."
+                            )}"
+                            required
+                        ></textarea>
+                    </label>
+                    <div class="card-actions">
+                        <button class="btn btn-primary" type="submit">Send Reply</button>
+                    </div>
+                </form>
+            `
+            : "";
+
+        panel.innerHTML = `${messageHtml}${replyBox}`;
     }
 
     async function updateAvailability(listingId, availability) {

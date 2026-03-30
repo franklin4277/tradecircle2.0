@@ -283,6 +283,32 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
     assert.equal(sellerMessages.body.messages[0].senderName, "Buyer One");
     assert.equal(sellerMessages.body.messages[0].senderEmail, "buyer@example.com");
 
+    await request(app)
+        .post(`/api/listings/${listingId}/messages`)
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .send({
+            message: "Yes, still available. You can inspect it tomorrow morning."
+        })
+        .expect(201);
+
+    const buyerConversation = await request(app)
+        .get(`/api/listings/${listingId}/messages`)
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .expect(200);
+    assert.ok(
+        buyerConversation.body.messages.some(
+            (message) => message.senderName === "Seller One"
+        )
+    );
+
+    const buyerThreads = await request(app)
+        .get("/api/listings/conversations")
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .expect(200);
+    assert.ok(Array.isArray(buyerThreads.body.threads));
+    assert.equal(buyerThreads.body.threads.length, 1);
+    assert.equal(buyerThreads.body.threads[0].listingId, listingId);
+
     const inboxAfterRead = await request(app)
         .get("/api/listings/inbox")
         .set("Authorization", `Bearer ${sellerToken}`)
