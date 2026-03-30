@@ -139,12 +139,32 @@ const apiLimiter = createRateLimiter({
 
 const authLimiter = createRateLimiter({
     windowMs: 15 * 60 * 1000,
-    max: 20,
-    message: "Too many authentication requests. Please wait and try again."
+    max: 30,
+    message: "Too many authentication attempts. Please wait and try again.",
+    keyGenerator: (req) => {
+        const forwardedFor = String(req.headers["x-forwarded-for"] || "")
+            .split(",")[0]
+            .trim();
+        const ip = forwardedFor || req.ip || "unknown";
+        const email = String((req.body && req.body.email) || "")
+            .trim()
+            .toLowerCase();
+        return email ? `${ip}:${email}` : ip;
+    }
+});
+
+const refreshLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 180,
+    message: "Too many session refresh requests. Please try again shortly."
 });
 
 app.use("/api", apiLimiter);
-app.use("/api/auth", authLimiter);
+app.use("/api/auth/login", authLimiter);
+app.use("/api/auth/register", authLimiter);
+app.use("/api/auth/forgot-password", authLimiter);
+app.use("/api/auth/reset-password", authLimiter);
+app.use("/api/auth/refresh", refreshLimiter);
 
 app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(publicDir));

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Messages | TradeCircle</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body data-page="messages">
+    <header class="navbar">
+        <div class="nav-inner">
+            <a href="index.html" class="logo">
+                <span class="logo-mark">TC</span>
+                <span>TradeCircle</span>
+            </a>
+
+            <form id="navSearchForm" class="nav-search" autocomplete="off">
+                <input id="navSearchInput" type="search" placeholder="Search products...">
+                <button type="submit" class="btn btn-primary">Search</button>
+            </form>
+
+            <nav id="authLinks" class="nav-links" aria-label="Primary"></nav>
+        </div>
+    </header>
+
+    <main class="page-wrap chat-layout">
+        <section class="panel chat-thread-panel">
+            <div class="panel-head row-between">
+                <div>
+                    <h1>Messages</h1>
+                    <p>Open a thread and chat without scrolling through dashboard sections.</p>
+                </div>
+                <button id="refreshThreadsBtn" class="btn btn-secondary" type="button">Refresh</button>
+            </div>
+            <div id="messageThreads" class="inbox-list"></div>
+        </section>
+
+        <section class="panel chat-window-panel">
+            <div class="panel-head">
+                <h2 id="chatThreadTitle">Select a conversation</h2>
+                <p id="chatThreadMeta">Choose a listing thread from the left/top panel.</p>
+            </div>
+            <div id="messagePanel" class="message-panel muted">Conversation will appear here.</div>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="script.js" defer></script>
+</body>
+</html>

@@ -6,7 +6,7 @@
         const forwardedFor = String(req.headers["x-forwarded-for"] || "")
             .split(",")[0]
             .trim();
-        return req.ip || forwardedFor || "unknown";
+        return forwardedFor || req.ip || "unknown";
     };
     const keyGenerator =
         typeof options.keyGenerator === "function"

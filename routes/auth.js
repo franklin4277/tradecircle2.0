@@ -14,6 +14,8 @@ const REFRESH_TOKEN_SECRET = String(
 );
 const ACCESS_TOKEN_TTL = String(process.env.ACCESS_TOKEN_TTL || "15m").trim() || "15m";
 const REFRESH_TOKEN_DAYS = Math.max(1, Number(process.env.REFRESH_TOKEN_DAYS || 7));
+const PASSWORD_RESET_MINUTES = Math.max(5, Number(process.env.PASSWORD_RESET_MINUTES || 30));
+const APP_BASE_URL = String(process.env.APP_BASE_URL || "").trim();
 const ACCESS_COOKIE_NAME = "tc_access";
 const REFRESH_COOKIE_NAME = "tc_refresh";
 
@@ -81,6 +83,21 @@ function clearAuthCookies(res) {
     };
     res.clearCookie(ACCESS_COOKIE_NAME, options);
     res.clearCookie(REFRESH_COOKIE_NAME, options);
+}
+
+function resolveAppBaseUrl(req) {
+    const configured = String(APP_BASE_URL || "").trim();
+    if (/^https?:\/\//i.test(configured)) {
+        return configured.replace(/\/+$/, "");
+    }
+
+    const host = String((req && req.get && req.get("host")) || "").trim();
+    if (host) {
+        const protocol = NODE_ENV === "production" ? "https" : String(req.protocol || "http");
+        return `${protocol}://${host}`;
+    }
+
+    return "http://localhost:5000";
 }
 
 async function issueRefreshToken(req, userId) {
@@ -264,6 +281,96 @@ router.post("/login", async (req, res, next) => {
             message: "Login successful.",
             token: session.accessToken,
             user
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.post("/forgot-password", async (req, res, next) => {
+    try {
+        const email = String(req.body.email || "").trim().toLowerCase();
+        const genericMessage =
+            "If an account with that email exists, a password reset link has been generated.";
+
+        if (!email || !isValidEmail(email)) {
+            return res.json({ message: genericMessage });
+        }
+
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.json({ message: genericMessage });
+        }
+
+        const rawToken = crypto.randomBytes(32).toString("hex");
+        user.passwordResetTokenHash = hashToken(rawToken);
+        user.passwordResetExpiresAt = new Date(Date.now() + PASSWORD_RESET_MINUTES * 60 * 1000);
+        await user.save();
+
+        const resetUrl = `${resolveAppBaseUrl(req)}/reset-password.html?token=${encodeURIComponent(
+            rawToken
+        )}`;
+
+        if (NODE_ENV !== "production") {
+            return res.json({
+                message: `${genericMessage} (Development mode: link returned in response.)`,
+                resetUrl,
+                expiresInMinutes: PASSWORD_RESET_MINUTES
+            });
+        }
+
+        // eslint-disable-next-line no-console
+        console.log(`[TradeCircle] Password reset requested for ${email}. Link: ${resetUrl}`);
+        return res.json({ message: genericMessage });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.post("/reset-password", async (req, res, next) => {
+    try {
+        const token = String(req.body.token || "").trim();
+        const password = String(req.body.password || "");
+
+        if (!token || !password) {
+            return res.status(400).json({ message: "Reset token and new password are required." });
+        }
+
+        if (!isStrongPassword(password)) {
+            return res.status(400).json({
+                message: "Password must be at least 8 characters and include both letters and numbers."
+            });
+        }
+
+        const tokenHash = hashToken(token);
+        const user = await User.findOne({
+            passwordResetTokenHash: tokenHash,
+            passwordResetExpiresAt: { $gt: new Date() }
+        });
+        if (!user) {
+            return res.status(400).json({
+                message: "Reset token is invalid or expired. Request a new reset link."
+            });
+        }
+
+        user.password = await bcrypt.hash(password, 12);
+        user.passwordResetTokenHash = "";
+        user.passwordResetExpiresAt = null;
+        await user.save();
+
+        await RefreshToken.updateMany(
+            { user: user._id, revokedAt: null },
+            {
+                $set: {
+                    revokedAt: new Date(),
+                    replacedByTokenId: "password_reset"
+                }
+            }
+        );
+
+        clearAuthCookies(res);
+        return res.json({
+            message: "Password reset successful. Please login with your new password."
         });
     } catch (error) {
         return next(error);

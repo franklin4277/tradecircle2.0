@@ -49,6 +49,53 @@ function buyerHasAcceptedOfferWithSeller(listing, buyerId) {
     });
 }
 
+function normalizeUserId(value) {
+    if (!value) {
+        return "";
+    }
+    return String(value._id || value.id || value);
+}
+
+function parseStars(value) {
+    const stars = Number(value);
+    if (!Number.isFinite(stars)) {
+        return null;
+    }
+    if (!Number.isInteger(stars)) {
+        return null;
+    }
+    if (stars < 1 || stars > 5) {
+        return null;
+    }
+    return stars;
+}
+
+function hasEscrowRating(escrow, fromUserId, toUserId) {
+    const ratings = Array.isArray(escrow && escrow.ratings) ? escrow.ratings : [];
+    const fromId = String(fromUserId || "");
+    const toId = String(toUserId || "");
+    if (!fromId || !toId) {
+        return false;
+    }
+
+    return ratings.some((rating) => {
+        const ratingFrom = normalizeUserId(rating.fromUser);
+        const ratingTo = normalizeUserId(rating.toUser);
+        return ratingFrom === fromId && ratingTo === toId;
+    });
+}
+
+function applyStarRating(targetUser, stars) {
+    const currentCount = Math.max(0, Number(targetUser.ratingCount || 0));
+    const currentTotal = Math.max(0, Number(targetUser.ratingTotal || 0));
+    const nextCount = currentCount + 1;
+    const nextTotal = currentTotal + Number(stars || 0);
+
+    targetUser.ratingCount = nextCount;
+    targetUser.ratingTotal = Number(nextTotal.toFixed(2));
+    targetUser.starRating = Number((nextTotal / nextCount).toFixed(2));
+}
+
 function buildWalletSnapshot(user) {
     return {
         available: roundMoney(user && user.walletBalance),
@@ -460,8 +507,8 @@ router.get("/mine", auth, requireCommunityVerified, async (req, res, next) => {
             $or: [{ buyer: req.user.id }, { seller: req.user.id }]
         })
             .populate("listing", "title image location price availability status")
-            .populate("buyer", "name email")
-            .populate("seller", "name email")
+            .populate("buyer", "name email starRating ratingCount")
+            .populate("seller", "name email starRating ratingCount")
             .sort({ updatedAt: -1 })
             .limit(250);
 
@@ -475,8 +522,8 @@ router.get("/admin/disputes", auth, requireRole("admin", "moderator"), async (re
     try {
         const escrows = await Escrow.find({ status: "disputed" })
             .populate("listing", "title image location price availability status")
-            .populate("buyer", "name email")
-            .populate("seller", "name email")
+            .populate("buyer", "name email starRating ratingCount")
+            .populate("seller", "name email starRating ratingCount")
             .sort({ updatedAt: -1 })
             .limit(250);
 
@@ -495,8 +542,8 @@ router.get("/:id", auth, requireCommunityVerified, async (req, res, next) => {
 
         const escrow = await Escrow.findById(escrowId)
             .populate("listing", "title image location price availability status")
-            .populate("buyer", "name email")
-            .populate("seller", "name email")
+            .populate("buyer", "name email starRating ratingCount")
+            .populate("seller", "name email starRating ratingCount")
             .populate("events.by", "name role");
 
         if (!escrow) {
@@ -513,6 +560,93 @@ router.get("/:id", auth, requireCommunityVerified, async (req, res, next) => {
         }
 
         return res.json({ escrow });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.post("/:id/rate", auth, requireCommunityVerified, async (req, res, next) => {
+    try {
+        const escrowId = String(req.params.id || "").trim();
+        const stars = parseStars(req.body.stars);
+        const note = String(req.body.note || "").trim();
+
+        if (!isValidObjectId(escrowId)) {
+            return res.status(400).json({ message: "Invalid escrow ID." });
+        }
+        if (stars === null) {
+            return res.status(400).json({ message: "Stars must be an integer between 1 and 5." });
+        }
+        if (note.length > 280) {
+            return res.status(400).json({ message: "Rating note must be 280 characters or less." });
+        }
+
+        const escrow = await Escrow.findById(escrowId).select(
+            "buyer seller listing status ratings events"
+        );
+        if (!escrow) {
+            return res.status(404).json({ message: "Escrow not found." });
+        }
+        if (escrow.status !== "released") {
+            return res.status(400).json({
+                message: "You can rate only after escrow has been completed."
+            });
+        }
+
+        const buyerId = normalizeUserId(escrow.buyer);
+        const sellerId = normalizeUserId(escrow.seller);
+        const actorId = String(req.user.id || "");
+        const isBuyer = actorId === buyerId;
+        const isSeller = actorId === sellerId;
+        if (!isBuyer && !isSeller) {
+            return res.status(403).json({ message: "Only escrow participants can submit ratings." });
+        }
+
+        const targetUserId = isBuyer ? sellerId : buyerId;
+        if (!targetUserId) {
+            return res.status(400).json({ message: "Escrow counterparty is missing." });
+        }
+
+        if (hasEscrowRating(escrow, actorId, targetUserId)) {
+            return res.status(409).json({ message: "You already rated this counterparty for this escrow." });
+        }
+
+        const targetUser = await User.findById(targetUserId).select(
+            "name starRating ratingCount ratingTotal"
+        );
+        if (!targetUser) {
+            return res.status(404).json({ message: "Counterparty account not found." });
+        }
+
+        escrow.ratings.push({
+            fromUser: actorId,
+            toUser: targetUserId,
+            stars,
+            note
+        });
+        addEscrowEvent(escrow, "rated", actorId, `Counterparty rated ${stars}/5.`);
+        applyStarRating(targetUser, stars);
+
+        await Promise.all([escrow.save(), targetUser.save()]);
+
+        await createNotification({
+            userId: targetUserId,
+            type: "system",
+            title: "New Trade Rating",
+            body: `${req.user.name || "A user"} rated you ${stars}/5 after a completed escrow.`,
+            escrowId: escrow._id,
+            listingId: escrow.listing
+        });
+
+        return res.status(201).json({
+            message: "Rating submitted successfully.",
+            rating: {
+                stars,
+                targetUserId,
+                targetStarRating: targetUser.starRating,
+                targetRatingCount: targetUser.ratingCount
+            }
+        });
     } catch (error) {
         return next(error);
     }

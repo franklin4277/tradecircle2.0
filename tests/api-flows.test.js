@@ -52,6 +52,8 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
     const sellerToken = sellerRegister.body.token;
     const sellerId = sellerRegister.body.user && sellerRegister.body.user._id;
     assert.ok(sellerId);
+    assert.equal(sellerRegister.body.user.starRating, 0);
+    assert.equal(sellerRegister.body.user.ratingCount, 0);
 
     const sellerLogin = await request(app)
         .post("/api/auth/login")
@@ -61,6 +63,28 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
         })
         .expect(200);
     assert.ok(sellerLogin.body.token);
+
+    const sellerDeviceA = request.agent(app);
+    const sellerDeviceB = request.agent(app);
+
+    await sellerDeviceA
+        .post("/api/auth/login")
+        .send({
+            email: "seller@example.com",
+            password: "password123"
+        })
+        .expect(200);
+
+    await sellerDeviceB
+        .post("/api/auth/login")
+        .send({
+            email: "seller@example.com",
+            password: "password123"
+        })
+        .expect(200);
+
+    await sellerDeviceA.get("/api/auth/me").expect(200);
+    await sellerDeviceB.get("/api/auth/me").expect(200);
 
     await request(app)
         .post("/api/listings")
@@ -181,6 +205,8 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
     const buyerToken = buyerRegister.body.token;
     const buyerId = buyerRegister.body.user && buyerRegister.body.user._id;
     assert.ok(buyerId);
+    assert.equal(buyerRegister.body.user.starRating, 0);
+    assert.equal(buyerRegister.body.user.ratingCount, 0);
 
     await request(app)
         .patch(`/api/admin/users/${buyerId}/verify`)
@@ -391,9 +417,75 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
     assert.ok(releasedListing);
     assert.equal(releasedListing.availability, "sold");
 
+    const ratingResponse = await request(app)
+        .post(`/api/escrow/${escrowId}/rate`)
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .send({
+            stars: 5,
+            note: "Great seller, transparent communication."
+        })
+        .expect(201);
+    assert.equal(ratingResponse.body.rating.stars, 5);
+    assert.equal(ratingResponse.body.rating.targetRatingCount, 1);
+
+    await request(app)
+        .post(`/api/escrow/${escrowId}/rate`)
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .send({
+            stars: 4
+        })
+        .expect(409);
+
     const sellerProfileAfterRelease = await request(app)
         .get("/api/auth/me")
         .set("Authorization", `Bearer ${sellerToken}`)
         .expect(200);
     assert.equal(sellerProfileAfterRelease.body.user.walletBalance, 70000);
+    assert.equal(sellerProfileAfterRelease.body.user.starRating, 5);
+    assert.equal(sellerProfileAfterRelease.body.user.ratingCount, 1);
+
+    await request(app)
+        .post("/api/auth/register")
+        .send({
+            name: "Recover User",
+            email: "recover@example.com",
+            password: "password123",
+            phoneNumber: "0700000009",
+            city: "Eldoret"
+        })
+        .expect(201);
+
+    const forgotPassword = await request(app)
+        .post("/api/auth/forgot-password")
+        .send({ email: "recover@example.com" })
+        .expect(200);
+    assert.ok(String(forgotPassword.body.message || "").length > 0);
+    assert.ok(String(forgotPassword.body.resetUrl || "").includes("reset-password.html"));
+
+    const resetToken = new URL(forgotPassword.body.resetUrl).searchParams.get("token");
+    assert.ok(resetToken);
+
+    await request(app)
+        .post("/api/auth/reset-password")
+        .send({
+            token: resetToken,
+            password: "newpass456"
+        })
+        .expect(200);
+
+    await request(app)
+        .post("/api/auth/login")
+        .send({
+            email: "recover@example.com",
+            password: "password123"
+        })
+        .expect(401);
+
+    await request(app)
+        .post("/api/auth/login")
+        .send({
+            email: "recover@example.com",
+            password: "newpass456"
+        })
+        .expect(200);
 });

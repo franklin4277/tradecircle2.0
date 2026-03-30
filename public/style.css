@@ -604,9 +604,28 @@ select:focus {
     text-align: center;
 }
 
+.auth-helper {
+    margin-top: 0;
+    text-align: right;
+}
+
 .panel-foot a {
     color: var(--primary-dark);
     font-weight: 700;
+}
+
+.recovery-note {
+    margin-top: 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: #f8fbff;
+    padding: 0.8rem;
+    color: #173a6a;
+    word-break: break-word;
+}
+
+.recovery-note p {
+    margin: 0.2rem 0;
 }
 
 .dashboard-grid {
@@ -617,6 +636,38 @@ select:focus {
 
 .dashboard-wide {
     grid-column: 1 / -1;
+}
+
+.chat-layout {
+    display: grid;
+    grid-template-columns: minmax(260px, 340px) minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.chat-thread-panel,
+.chat-window-panel {
+    margin-bottom: 0;
+}
+
+.chat-window-panel .message-panel {
+    min-height: 58vh;
+    max-height: calc(100vh - 220px);
+    overflow-y: auto;
+    align-content: start;
+}
+
+.chat-window-panel .message-reply-form {
+    position: sticky;
+    bottom: 0;
+    z-index: 2;
+    background: #fff;
+    box-shadow: 0 -8px 20px rgba(8, 56, 130, 0.08);
+}
+
+.thread-active {
+    border-color: #95bbff;
+    box-shadow: 0 10px 24px rgba(0, 102, 255, 0.11);
 }
 
 .profile-card {
@@ -886,11 +937,36 @@ select:focus {
         grid-template-columns: 1fr;
     }
 
+    .chat-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .chat-window-panel .message-panel {
+        min-height: 52vh;
+        max-height: calc(100vh - 260px);
+    }
+
     .nav-inner {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: auto minmax(0, 1fr);
+        grid-template-areas:
+            "toggle brand"
+            "search search"
+            "links links";
         align-items: center;
         gap: 0.6rem;
+    }
+
+    .nav-toggle {
+        grid-area: toggle;
+        justify-self: start;
+        align-self: start;
+    }
+
+    .logo {
+        grid-area: brand;
+        justify-self: start;
+        margin-left: 0.08rem;
     }
 
     .nav-inner.menu-open {
@@ -926,12 +1002,14 @@ select:focus {
     }
 
     .nav-search {
+        grid-area: search;
         width: 100%;
         max-width: none;
         padding-top: 0.15rem;
     }
 
     .nav-links {
+        grid-area: links;
         margin-left: 0;
         width: 100%;
         justify-content: flex-start;

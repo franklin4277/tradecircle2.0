@@ -321,8 +321,8 @@ router.get("/", async (req, res, next) => {
 
         if (sort === "recommended") {
             const listings = await Listing.find(query)
-                .populate("seller", "name reputationScore verifiedSeller city")
-                .populate("owner", "name reputationScore verifiedSeller city")
+                .populate("seller", "name reputationScore verifiedSeller city starRating ratingCount")
+                .populate("owner", "name reputationScore verifiedSeller city starRating ratingCount")
                 .sort({ createdAt: -1 });
 
             listings.forEach((listing) => {
@@ -352,8 +352,8 @@ router.get("/", async (req, res, next) => {
 
         const [listings, total] = await Promise.all([
             Listing.find(query)
-                .populate("seller", "name reputationScore verifiedSeller city")
-                .populate("owner", "name reputationScore verifiedSeller city")
+                .populate("seller", "name reputationScore verifiedSeller city starRating ratingCount")
+                .populate("owner", "name reputationScore verifiedSeller city starRating ratingCount")
                 .sort(sortBy)
                 .skip(skip)
                 .limit(limit),
@@ -621,8 +621,8 @@ router.get("/:id", async (req, res, next) => {
             _id: listingId,
             status: "approved"
         })
-            .populate("seller", "name reputationScore verifiedSeller city")
-            .populate("owner", "name reputationScore verifiedSeller city");
+            .populate("seller", "name reputationScore verifiedSeller city starRating ratingCount")
+            .populate("owner", "name reputationScore verifiedSeller city starRating ratingCount");
 
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });

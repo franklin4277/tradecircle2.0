@@ -42,8 +42,20 @@
                 initRegisterPage();
             }
 
+            if (page === "forgot-password") {
+                initForgotPasswordPage();
+            }
+
+            if (page === "reset-password") {
+                initResetPasswordPage();
+            }
+
             if (page === "dashboard") {
                 await initDashboardPage();
+            }
+
+            if (page === "messages") {
+                await initMessagesPage();
             }
 
             if (page === "admin") {
@@ -207,6 +219,7 @@
             items.push("<a class=\"btn btn-link\" href=\"login.html\">Login</a>");
             items.push("<a class=\"btn btn-primary\" href=\"register.html\">Register</a>");
         } else {
+            items.push("<a class=\"btn btn-link\" href=\"messages.html\">Messages</a>");
             items.push("<a class=\"btn btn-link\" href=\"dashboard.html\">Dashboard</a>");
 
             if (state.user.role === "admin" || state.user.role === "moderator") {
@@ -260,7 +273,10 @@
             toggle.setAttribute("aria-label", "Open menu");
             toggle.setAttribute("aria-expanded", "false");
             toggle.innerHTML = "<span></span><span></span><span></span>";
-            navInner.insertBefore(toggle, authLinks);
+        }
+
+        if (navInner.firstElementChild !== toggle) {
+            navInner.insertBefore(toggle, navInner.firstElementChild);
         }
 
         const isMobileViewport = () => window.innerWidth <= 960;
@@ -482,6 +498,14 @@
             currency: "KES",
             maximumFractionDigits: 2
         }).format(amount);
+    }
+
+    function formatStars(starRating, ratingCount) {
+        const stars = Number(starRating);
+        const reviews = Number(ratingCount);
+        const normalizedStars = Number.isFinite(stars) ? Math.max(0, Math.min(5, stars)) : 0;
+        const normalizedReviews = Number.isFinite(reviews) ? Math.max(0, Math.floor(reviews)) : 0;
+        return `${normalizedStars.toFixed(1)} stars (${normalizedReviews})`;
     }
 
     function formatDate(value) {
@@ -883,6 +907,14 @@
             listing.seller && typeof listing.seller.reputationScore === "number"
                 ? listing.seller.reputationScore
                 : "N/A";
+        const sellerStarRating =
+            listing.seller && typeof listing.seller.starRating === "number"
+                ? listing.seller.starRating
+                : 0;
+        const sellerRatingCount =
+            listing.seller && typeof listing.seller.ratingCount === "number"
+                ? listing.seller.ratingCount
+                : 0;
 
         const sellerId = listing.seller && (listing.seller._id || listing.seller);
         const isOwner = !!(state.user && sellerId && String(sellerId) === String(state.user._id));
@@ -978,8 +1010,12 @@
                     <span>Rep: ${escapeHtml(String(sellerRep))}</span>
                 </div>
                 <div class="listing-meta">
-                    <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>
+                    <span>Seller Rating: ${escapeHtml(formatStars(sellerStarRating, sellerRatingCount))}</span>
                     <span>Views: ${escapeHtml(String(listing.viewsCount || 0))}</span>
+                </div>
+                <div class="listing-meta">
+                    <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>
+                    <span>Status: ${escapeHtml(listing.availability || "available")}</span>
                 </div>
                 ${actionHtml}
             </div>
@@ -1238,6 +1274,109 @@
                 }, 300);
             } catch (error) {
                 showToast(error.message || "Registration failed.", "error");
+            }
+        });
+    }
+
+    function initForgotPasswordPage() {
+        const form = document.getElementById("forgotPasswordForm");
+        const resultBox = document.getElementById("forgotPasswordResult");
+        if (!form) {
+            return;
+        }
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const formData = new FormData(form);
+            const email = String(formData.get("email") || "").trim().toLowerCase();
+            if (!email) {
+                showToast("Email is required.", "error");
+                return;
+            }
+
+            try {
+                const response = await apiRequest("/auth/forgot-password", {
+                    method: "POST",
+                    body: { email }
+                });
+
+                showToast(response.message || "Password reset link generated.", "success");
+                form.reset();
+
+                if (resultBox) {
+                    const resetUrl = String(response.resetUrl || "").trim();
+                    if (resetUrl) {
+                        resultBox.classList.remove("hidden");
+                        resultBox.innerHTML = `
+                            <p><strong>Development Reset Link:</strong></p>
+                            <p><a href="${escapeHtml(resetUrl)}">${escapeHtml(resetUrl)}</a></p>
+                            <p class="card-hint">Use this link to set a new password.</p>
+                        `;
+                    } else {
+                        resultBox.classList.add("hidden");
+                        resultBox.innerHTML = "";
+                    }
+                }
+            } catch (error) {
+                showToast(error.message || "Could not generate reset link.", "error");
+            }
+        });
+    }
+
+    function initResetPasswordPage() {
+        const form = document.getElementById("resetPasswordForm");
+        const tokenInput = document.getElementById("resetTokenInput");
+        if (!form || !tokenInput) {
+            return;
+        }
+
+        const params = new URLSearchParams(window.location.search);
+        const tokenFromQuery = String(params.get("token") || "").trim();
+        if (tokenFromQuery) {
+            tokenInput.value = tokenFromQuery;
+        }
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const formData = new FormData(form);
+            const token = String(formData.get("token") || "").trim();
+            const password = String(formData.get("password") || "");
+            const confirmPassword = String(formData.get("confirmPassword") || "");
+
+            if (!token) {
+                showToast("Reset token is required.", "error");
+                return;
+            }
+            if (!isStrongPassword(password)) {
+                showToast(
+                    "Password must be at least 8 characters and include both letters and numbers.",
+                    "error"
+                );
+                return;
+            }
+            if (password !== confirmPassword) {
+                showToast("Passwords do not match.", "error");
+                return;
+            }
+
+            try {
+                const response = await apiRequest("/auth/reset-password", {
+                    method: "POST",
+                    body: {
+                        token,
+                        password
+                    }
+                });
+
+                clearSession();
+                showToast(response.message || "Password reset successful.", "success");
+                setTimeout(() => {
+                    window.location.href = "login.html";
+                }, 700);
+            } catch (error) {
+                showToast(error.message || "Password reset failed.", "error");
             }
         });
     }
@@ -1610,9 +1749,264 @@
         await loadMyListings(myListings);
     }
 
+    async function fetchCombinedMessageThreads() {
+        const [sellerResult, buyerResult] = await Promise.all([
+            apiRequest("/listings/inbox", {}, true).catch(() => ({ threads: [] })),
+            apiRequest("/listings/conversations", {}, true).catch(() => ({ threads: [] }))
+        ]);
+
+        const sellerThreads = Array.isArray(sellerResult.threads) ? sellerResult.threads : [];
+        const buyerThreads = Array.isArray(buyerResult.threads) ? buyerResult.threads : [];
+        const threadMap = new Map();
+
+        const applyThread = (thread, source) => {
+            const listingId = String((thread && thread.listingId) || "").trim();
+            if (!listingId) {
+                return;
+            }
+
+            const entry = threadMap.get(listingId) || {
+                listingId,
+                title: "Listing",
+                location: "",
+                availability: "available",
+                unreadCount: 0,
+                totalMessages: 0,
+                lastMessage: {
+                    body: "",
+                    createdAt: null,
+                    fromSeller: false,
+                    senderName: ""
+                },
+                sourceTags: new Set()
+            };
+
+            entry.title = thread.title || entry.title;
+            entry.location = thread.location || entry.location;
+            entry.availability = thread.availability || entry.availability;
+            entry.unreadCount = Math.max(entry.unreadCount, Number(thread.unreadCount || 0));
+            entry.totalMessages = Math.max(entry.totalMessages, Number(thread.totalMessages || 0));
+            entry.sourceTags.add(source);
+
+            const incomingLast = (thread && thread.lastMessage) || {};
+            const currentAt = new Date(entry.lastMessage.createdAt || 0).getTime();
+            const incomingAt = new Date(incomingLast.createdAt || 0).getTime();
+            if (incomingAt >= currentAt) {
+                entry.lastMessage = {
+                    body: incomingLast.body || "",
+                    createdAt: incomingLast.createdAt || null,
+                    fromSeller: !!incomingLast.fromSeller,
+                    senderName: incomingLast.senderName || ""
+                };
+            }
+
+            threadMap.set(listingId, entry);
+        };
+
+        sellerThreads.forEach((thread) => applyThread(thread, "seller"));
+        buyerThreads.forEach((thread) => applyThread(thread, "buyer"));
+
+        return Array.from(threadMap.values()).sort((a, b) => {
+            const aTime = new Date((a.lastMessage && a.lastMessage.createdAt) || 0).getTime();
+            const bTime = new Date((b.lastMessage && b.lastMessage.createdAt) || 0).getTime();
+            return bTime - aTime;
+        });
+    }
+
+    function renderMessageThreadList(container, threads, selectedListingId) {
+        if (!container) {
+            return;
+        }
+
+        if (!threads.length) {
+            container.innerHTML =
+                "<p class=\"empty-state\">No message threads yet. Start by messaging a listing from the marketplace.</p>";
+            return;
+        }
+
+        container.innerHTML = threads
+            .map((thread) => {
+                const isActive = String(thread.listingId) === String(selectedListingId || "");
+                const unreadChip =
+                    Number(thread.unreadCount || 0) > 0
+                        ? `<span class="chip chip-warning">${escapeHtml(
+                              String(thread.unreadCount)
+                          )} unread</span>`
+                        : "<span class=\"chip chip-verified\">Read</span>";
+                const sourceLabel = Array.from(thread.sourceTags || []).includes("seller")
+                    ? "Seller Inbox"
+                    : "Buyer Conversation";
+                const lastTime = thread.lastMessage && thread.lastMessage.createdAt
+                    ? formatRelativeTime(thread.lastMessage.createdAt)
+                    : "recent";
+
+                return `
+                    <article class="inbox-item ${isActive ? "thread-active" : ""}">
+                        <div class="inbox-top">
+                            <p class="inbox-title">${escapeHtml(thread.title || "Listing")}</p>
+                            <div class="meta-chips">
+                                ${unreadChip}
+                                <span class="chip">${escapeHtml(sourceLabel)}</span>
+                            </div>
+                        </div>
+                        <p class="inbox-meta">${escapeHtml(thread.location || "Unknown location")} · ${escapeHtml(
+                    lastTime
+                )}</p>
+                        <p class="card-hint">${escapeHtml(truncate(thread.lastMessage.body || "", 110))}</p>
+                        <div class="card-actions">
+                            <button class="btn btn-secondary" type="button" data-open-thread data-listing-id="${escapeHtml(
+                                thread.listingId
+                            )}">
+                                Open Thread
+                            </button>
+                        </div>
+                    </article>
+                `;
+            })
+            .join("");
+    }
+
+    async function initMessagesPage() {
+        if (!ensureAuthenticated()) {
+            return;
+        }
+
+        const threadContainer = document.getElementById("messageThreads");
+        const messagePanel = document.getElementById("messagePanel");
+        const titleElement = document.getElementById("chatThreadTitle");
+        const metaElement = document.getElementById("chatThreadMeta");
+        const refreshBtn = document.getElementById("refreshThreadsBtn");
+        if (!threadContainer || !messagePanel || !titleElement || !metaElement) {
+            return;
+        }
+
+        let activeListingId = String(new URLSearchParams(window.location.search).get("listing") || "").trim();
+        let threadCache = [];
+
+        const openThread = async (listingId) => {
+            const id = String(listingId || "").trim();
+            if (!id) {
+                return;
+            }
+
+            activeListingId = id;
+            const thread = threadCache.find((item) => String(item.listingId) === id);
+            titleElement.textContent = thread ? thread.title || "Conversation" : "Conversation";
+            metaElement.textContent = thread
+                ? `${thread.location || "Unknown location"} · ${thread.availability || "available"}`
+                : "Conversation loaded";
+
+            await loadListingMessages(id, true);
+            renderMessageThreadList(threadContainer, threadCache, activeListingId);
+        };
+
+        const refreshThreads = async (shouldToast = false) => {
+            threadContainer.innerHTML = "<p class=\"empty-state\">Loading message threads...</p>";
+            threadCache = await fetchCombinedMessageThreads();
+            renderMessageThreadList(threadContainer, threadCache, activeListingId);
+
+            if (!activeListingId && threadCache.length > 0) {
+                activeListingId = String(threadCache[0].listingId);
+            }
+
+            if (activeListingId) {
+                await openThread(activeListingId);
+            } else {
+                messagePanel.innerHTML = "<p class=\"muted\">No conversation selected yet.</p>";
+            }
+
+            if (shouldToast) {
+                showToast("Messages refreshed.", "success");
+            }
+        };
+
+        threadContainer.addEventListener("click", async (event) => {
+            const button = event.target.closest("button[data-open-thread]");
+            if (!button) {
+                return;
+            }
+            const listingId = String(button.dataset.listingId || "").trim();
+            if (!listingId) {
+                return;
+            }
+            try {
+                await openThread(listingId);
+            } catch (error) {
+                showToast(error.message || "Could not open conversation.", "error");
+            }
+        });
+
+        messagePanel.addEventListener("click", async (event) => {
+            const button = event.target.closest("button[data-offer-decision]");
+            if (!button) {
+                return;
+            }
+
+            const listingId = String(messagePanel.dataset.listingId || "").trim();
+            const messageId = String(button.dataset.messageId || "").trim();
+            const decision = String(button.dataset.offerDecision || "").trim();
+            if (!listingId || !messageId || !decision) {
+                return;
+            }
+
+            try {
+                await decideOffer(listingId, messageId, decision);
+                await loadListingMessages(listingId, true);
+                await refreshThreads();
+            } catch (error) {
+                showToast(error.message || "Offer decision failed.", "error");
+            }
+        });
+
+        messagePanel.addEventListener("submit", async (event) => {
+            const form = event.target.closest("form[data-reply-form]");
+            if (!form) {
+                return;
+            }
+            event.preventDefault();
+
+            const listingId = String(form.dataset.listingId || "").trim();
+            const input = form.querySelector("textarea[name='replyMessage']");
+            const message = String((input && input.value) || "").trim();
+
+            if (!listingId) {
+                showToast("Listing thread is missing.", "error");
+                return;
+            }
+            if (message.length < 2) {
+                showToast("Reply must have at least 2 characters.", "error");
+                return;
+            }
+
+            try {
+                await sendConversationReply(listingId, message);
+                if (input) {
+                    input.value = "";
+                }
+                await loadListingMessages(listingId, true);
+                await refreshThreads();
+            } catch (error) {
+                showToast(error.message || "Unable to send reply.", "error");
+            }
+        });
+
+        if (refreshBtn) {
+            refreshBtn.addEventListener("click", async () => {
+                try {
+                    await refreshThreads(true);
+                } catch (error) {
+                    showToast(error.message || "Unable to refresh messages.", "error");
+                }
+            });
+        }
+
+        await refreshThreads();
+    }
+
     function renderProfileCard(container, user) {
         const walletAvailable = formatCurrency(Number(user.walletBalance || 0));
         const walletHeld = formatCurrency(Number(user.walletHeldBalance || 0));
+        const starSummary = formatStars(user.starRating || 0, user.ratingCount || 0);
 
         container.innerHTML = `
             <div class="profile-row"><span>Name</span><strong>${escapeHtml(user.name)}</strong></div>
@@ -1622,6 +2016,7 @@
                 user.communityVerified ? "Verified" : "Pending Verification"
             }</strong></div>
             <div class="profile-row"><span>Reputation</span><strong>${escapeHtml(String(user.reputationScore))}</strong></div>
+            <div class="profile-row"><span>Stars</span><strong>${escapeHtml(starSummary)}</strong></div>
             <div class="profile-row"><span>Wallet Available</span><strong>${escapeHtml(walletAvailable)}</strong></div>
             <div class="profile-row"><span>Wallet Held</span><strong>${escapeHtml(walletHeld)}</strong></div>
             <div class="profile-row"><span>Phone</span><strong>${escapeHtml(formatPhone(user.phoneNumber))}</strong></div>
@@ -1680,6 +2075,9 @@
                             )}">
                                 Open Conversation
                             </button>
+                            <a class="btn btn-link" href="messages.html?listing=${escapeHtml(
+                                thread.listingId
+                            )}">Full Chat</a>
                         </div>
                     </article>
                 `;
@@ -1731,6 +2129,9 @@
                             )}">
                                 Open Conversation
                             </button>
+                            <a class="btn btn-link" href="messages.html?listing=${escapeHtml(
+                                thread.listingId
+                            )}">Full Chat</a>
                         </div>
                     </article>
                 `;
@@ -1925,9 +2326,32 @@
                 const buyerName = escrow.buyer && escrow.buyer.name ? escrow.buyer.name : "Buyer";
                 const sellerName = escrow.seller && escrow.seller.name ? escrow.seller.name : "Seller";
                 const counterpartLabel = isBuyer ? `Seller: ${sellerName}` : `Buyer: ${buyerName}`;
+                const counterpart = isBuyer ? escrow.seller : escrow.buyer;
+                const counterpartId = counterpart && (counterpart._id || counterpart);
+                const counterpartStarRating =
+                    counterpart && typeof counterpart.starRating === "number"
+                        ? counterpart.starRating
+                        : 0;
+                const counterpartRatingCount =
+                    counterpart && typeof counterpart.ratingCount === "number"
+                        ? counterpart.ratingCount
+                        : 0;
                 const amount = formatCurrency(escrow.amount || 0);
                 const fee = formatCurrency(escrow.serviceFee || 0);
                 const totalHeld = formatCurrency(escrow.totalHeld || 0);
+                const ratings = Array.isArray(escrow.ratings) ? escrow.ratings : [];
+                const alreadyRated = ratings.some((rating) => {
+                    const fromUser = String(
+                        (rating && rating.fromUser && (rating.fromUser._id || rating.fromUser)) || ""
+                    );
+                    const toUser = String(
+                        (rating && rating.toUser && (rating.toUser._id || rating.toUser)) || ""
+                    );
+                    return (
+                        fromUser === String(state.user && state.user._id) &&
+                        toUser === String(counterpartId || "")
+                    );
+                });
 
                 let actions = "";
                 if (!isBuyer && status === "funded") {
@@ -1950,6 +2374,13 @@
                         escrow._id
                     )}">Open Dispute</button>`;
                 }
+                if (status === "released" && !alreadyRated) {
+                    actions += `<button class="btn btn-primary" type="button" data-escrow-action="rate" data-id="${escapeHtml(
+                        escrow._id
+                    )}" data-counterpart="${escapeHtml(
+                        isBuyer ? sellerName : buyerName
+                    )}">Rate Counterparty</button>`;
+                }
 
                 return `
                     <article class="inbox-item">
@@ -1966,6 +2397,12 @@
                         <div class="listing-meta">
                             <span>${escapeHtml(counterpartLabel)}</span>
                             <span>Status: ${escapeHtml(status)}</span>
+                        </div>
+                        <div class="listing-meta">
+                            <span>Counterparty Rating: ${escapeHtml(
+                                formatStars(counterpartStarRating, counterpartRatingCount)
+                            )}</span>
+                            <span>${alreadyRated ? "You rated this trade." : "Not rated yet"}</span>
                         </div>
                         <div class="listing-meta">
                             <span>Item: ${escapeHtml(amount)}</span>
@@ -2051,6 +2488,43 @@
                 true
             );
             showToast(response.message || "Dispute opened.", "success");
+            return;
+        }
+
+        if (action === "rate") {
+            const starsInput = window.prompt(
+                "Rate this counterparty from 1 to 5 stars:",
+                "5"
+            );
+            if (starsInput === null) {
+                return;
+            }
+
+            const stars = Number(String(starsInput).trim());
+            if (!Number.isInteger(stars) || stars < 1 || stars > 5) {
+                throw new Error("Stars must be a whole number between 1 and 5.");
+            }
+
+            const note = window.prompt(
+                "Optional rating note (max 280 chars):",
+                "Smooth transaction and good communication."
+            );
+            if (note === null) {
+                return;
+            }
+
+            const response = await apiRequest(
+                `/escrow/${escrowId}/rate`,
+                {
+                    method: "POST",
+                    body: {
+                        stars,
+                        note: String(note || "").trim()
+                    }
+                },
+                true
+            );
+            showToast(response.message || "Rating submitted.", "success");
         }
     }
 
@@ -2288,6 +2762,7 @@
             : "";
 
         panel.innerHTML = `${messageHtml}${replyBox}`;
+        panel.scrollTop = panel.scrollHeight;
     }
 
     async function updateAvailability(listingId, availability) {
@@ -2780,7 +3255,9 @@
                         <td>${escapeHtml(user.email || "-")}</td>
                         <td>${escapeHtml(user.role || "user")}</td>
                         <td>${user.communityVerified ? "Yes" : "No"}</td>
-                        <td>${escapeHtml(String(user.reputationScore || 0))}<br><span class="muted">A: ${escapeHtml(
+                        <td>${escapeHtml(String(user.reputationScore || 0))}<br><span class="muted">Stars: ${escapeHtml(
+                    formatStars(user.starRating || 0, user.ratingCount || 0)
+                )}</span><br><span class="muted">A: ${escapeHtml(
                     formatCurrency(user.walletBalance || 0)
                 )} | H: ${escapeHtml(formatCurrency(user.walletHeldBalance || 0))}</span></td>
                         <td>${escapeHtml(formatDate(user.lastSeenAt || user.createdAt))}</td>
@@ -2859,6 +3336,14 @@
             listing.seller && typeof listing.seller.reputationScore === "number"
                 ? listing.seller.reputationScore
                 : "N/A";
+        const sellerStarRating =
+            listing.seller && typeof listing.seller.starRating === "number"
+                ? listing.seller.starRating
+                : 0;
+        const sellerRatingCount =
+            listing.seller && typeof listing.seller.ratingCount === "number"
+                ? listing.seller.ratingCount
+                : 0;
         const sellerVerified = !!(listing.seller && listing.seller.verifiedSeller);
 
         const chips = [
@@ -2937,16 +3422,16 @@
                     <span>Rep: ${escapeHtml(String(sellerReputation))}</span>
                 </div>
                 <div class="listing-meta">
-                    <span>${escapeHtml(sellerEmail)}</span>
+                    <span>Stars: ${escapeHtml(formatStars(sellerStarRating, sellerRatingCount))}</span>
                     <span>Reports: ${escapeHtml(String(listing.reportsCount || 0))}</span>
                 </div>
                 <div class="listing-meta">
+                    <span>${escapeHtml(sellerEmail)}</span>
                     <span>Risk: ${escapeHtml(String(listing.riskLevel || "low"))}</span>
-                    <span>Score: ${escapeHtml(String(listing.riskScore || 0))}</span>
                 </div>
                 <div class="listing-meta">
                     <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>
-                    <span>Views: ${escapeHtml(String(listing.viewsCount || 0))}</span>
+                    <span>Score: ${escapeHtml(String(listing.riskScore || 0))}</span>
                 </div>
                 ${actions}
             </div>

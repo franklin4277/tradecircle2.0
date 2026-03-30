@@ -45,8 +45,11 @@ admin analytics, moderation logs, and seller-buyer messaging.
 - `public/`
   - `index.html`
   - `login.html`
+  - `forgot-password.html`
+  - `reset-password.html`
   - `register.html`
   - `dashboard.html`
+  - `messages.html`
   - `admin.html`
   - `style.css`
   - `script.js`
@@ -56,9 +59,11 @@ admin analytics, moderation logs, and seller-buyer messaging.
 
 - Authentication and role-based access (`user`, `moderator`, `admin`)
 - JWT auth with secure HttpOnly cookie session rotation (access + refresh tokens)
+- Password recovery flow (forgot password + reset token with expiry)
 - Community verification workflow (users must be verified before trading actions)
 - Strong password policy for registration (minimum 8 characters with letters and numbers; stricter for admin)
 - User reputation system (default 100)
+- Star rating system (all users start at 0 stars and gain ratings from completed escrow trades)
 - Listing creation with image uploads
 - Listing moderation workflow (`pending`, `approved`, `rejected`)
 - Staff listing controls (admin/moderator can remove listings from moderation dashboard)
@@ -72,6 +77,7 @@ admin analytics, moderation logs, and seller-buyer messaging.
 - Messaging on listings
 - Offer workflow (buyer sends offer, seller accepts/rejects, accepted offer unlocks secure hold)
 - Seller inbox with unread counts + mark-as-read flow
+- Dedicated messaging page optimized for phone chat flow
 - Notification center (messages, offers, escrow, wallet, moderation updates)
 - Escrow secure hold flow:
   - buyer funds hold in-platform from a demo wallet balance
@@ -115,6 +121,10 @@ ACCESS_TOKEN_TTL=15m
 REFRESH_TOKEN_DAYS=7
 PORT=5000
 CORS_ORIGIN=http://localhost:5000
+# Optional app URL used when generating password reset links
+APP_BASE_URL=http://localhost:5000
+# Optional password reset expiry in minutes
+PASSWORD_RESET_MINUTES=30
 
 # Optional: auto-create admin at startup
 ADMIN_EMAIL=admin@tradecircle.com
@@ -152,6 +162,7 @@ Production notes:
 - `REFRESH_TOKEN_SECRET` is strongly recommended in production (different from `JWT_SECRET`).
 - `CORS_ORIGIN` must be a comma-separated list of valid `http(s)` origins.
 - In production, `CORS_ORIGIN` must be set.
+- Set `APP_BASE_URL` in production so password reset links point to your live site.
 - `ALLOW_ADMIN_REGISTRATION` and `ALLOW_ADMIN_PROMOTION` are `false` by default for stronger admin security.
 - On hosted environments, use persistent storage path via `UPLOADS_DIR` (otherwise local uploads are ephemeral).
 
@@ -192,7 +203,7 @@ Open:
 - Route protection by role
 - `helmet` security headers
 - Request key sanitization to block `$` and `.` operator injection patterns
-- Basic rate limiting middleware
+- Basic rate limiting middleware with separate limits for login attempts and session refresh
 - Image type/size checks for uploads
 
 ## Notes

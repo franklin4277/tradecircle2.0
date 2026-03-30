@@ -56,7 +56,7 @@ async function auth(req, res, next) {
         ensureAccessSecret();
         const payload = jwt.verify(token, ACCESS_TOKEN_SECRET);
         const user = await User.findById(payload.id).select(
-            "name email role reputationScore phoneNumber city verifiedSeller communityVerified walletBalance walletHeldBalance"
+            "name email role reputationScore starRating ratingCount phoneNumber city verifiedSeller communityVerified walletBalance walletHeldBalance"
         );
 
         if (!user) {
@@ -69,6 +69,8 @@ async function auth(req, res, next) {
             email: user.email,
             role: user.role,
             reputationScore: user.reputationScore,
+            starRating: Number(user.starRating || 0),
+            ratingCount: Number(user.ratingCount || 0),
             phoneNumber: user.phoneNumber || "",
             city: user.city || "",
             communityVerified: !!user.communityVerified,

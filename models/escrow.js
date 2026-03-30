@@ -27,6 +27,38 @@ const escrowEventSchema = new mongoose.Schema(
     { _id: false }
 );
 
+const escrowRatingSchema = new mongoose.Schema(
+    {
+        fromUser: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            required: true
+        },
+        toUser: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            required: true
+        },
+        stars: {
+            type: Number,
+            required: true,
+            min: 1,
+            max: 5
+        },
+        note: {
+            type: String,
+            trim: true,
+            maxlength: 280,
+            default: ""
+        },
+        createdAt: {
+            type: Date,
+            default: Date.now
+        }
+    },
+    { _id: false }
+);
+
 const escrowSchema = new mongoose.Schema(
     {
         listing: {
@@ -112,6 +144,10 @@ const escrowSchema = new mongoose.Schema(
         autoRefundedAt: {
             type: Date,
             default: null
+        },
+        ratings: {
+            type: [escrowRatingSchema],
+            default: []
         },
         events: [escrowEventSchema]
     },

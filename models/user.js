@@ -59,6 +59,31 @@ const userSchema = new mongoose.Schema(
             min: 0,
             max: 1000
         },
+        starRating: {
+            type: Number,
+            default: 0,
+            min: 0,
+            max: 5
+        },
+        ratingCount: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+        ratingTotal: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+        passwordResetTokenHash: {
+            type: String,
+            trim: true,
+            default: ""
+        },
+        passwordResetExpiresAt: {
+            type: Date,
+            default: null
+        },
         walletBalance: {
             type: Number,
             default: 0,
@@ -80,6 +105,8 @@ const userSchema = new mongoose.Schema(
 userSchema.set("toJSON", {
     transform: (_, ret) => {
         delete ret.password;
+        delete ret.passwordResetTokenHash;
+        delete ret.passwordResetExpiresAt;
         delete ret.__v;
         return ret;
     }

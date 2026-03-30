@@ -153,7 +153,7 @@ router.get("/analytics", async (req, res, next) => {
 router.get("/pending", async (req, res, next) => {
     try {
         const listings = await Listing.find({ status: "pending" })
-            .populate("seller", "name email reputationScore verifiedSeller city")
+            .populate("seller", "name email reputationScore verifiedSeller city starRating ratingCount")
             .sort({ createdAt: -1 });
 
         return res.json({ listings });
@@ -170,7 +170,7 @@ router.get("/listings", async (req, res, next) => {
         const query = validStatuses.includes(status) ? { status } : {};
 
         const listings = await Listing.find(query)
-            .populate("seller", "name email reputationScore verifiedSeller city")
+            .populate("seller", "name email reputationScore verifiedSeller city starRating ratingCount")
             .sort({ createdAt: -1 });
 
         return res.json({ listings });
@@ -256,7 +256,7 @@ router.get("/reports", async (req, res, next) => {
                 "title price location status reportsCount category itemCondition availability"
             )
             .populate("reporter", "name email")
-            .populate("seller", "name email reputationScore verifiedSeller city")
+            .populate("seller", "name email reputationScore verifiedSeller city starRating ratingCount")
             .sort({ createdAt: -1 })
             .limit(300);
 
@@ -289,7 +289,7 @@ router.get("/users", requireRole("admin"), async (req, res, next) => {
 
         const users = await User.find(query)
             .select(
-                "name email role communityVerified reputationScore walletBalance walletHeldBalance verifiedSeller city lastSeenAt createdAt"
+                "name email role communityVerified reputationScore starRating ratingCount walletBalance walletHeldBalance verifiedSeller city lastSeenAt createdAt"
             )
             .sort({ createdAt: -1 })
             .limit(500);
