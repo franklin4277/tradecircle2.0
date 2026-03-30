@@ -84,6 +84,28 @@ function isValidPhone(phoneNumber) {
     return /^[+]?[0-9][0-9\s-]{7,22}$/.test(phoneNumber);
 }
 
+function ensureListingSeller(listing) {
+    if (listing && !listing.seller && listing.owner) {
+        listing.seller = listing.owner;
+    }
+    return listing;
+}
+
+function getListingSellerId(listing) {
+    if (!listing) {
+        return "";
+    }
+    const seller = listing.seller || listing.owner;
+    return seller ? String(seller) : "";
+}
+
+function normalizeMessageSenderId(message) {
+    if (!message || !message.sender) {
+        return "";
+    }
+    return String(message.sender._id || message.sender);
+}
+
 router.get("/meta", async (req, res, next) => {
     try {
         const listingMatch = { status: "approved", availability: { $ne: "sold" } };
@@ -177,11 +199,18 @@ router.get("/", async (req, res, next) => {
         const [listings, total] = await Promise.all([
             Listing.find(query)
                 .populate("seller", "name reputationScore verifiedSeller city")
+                .populate("owner", "name reputationScore verifiedSeller city")
                 .sort(sortBy)
                 .skip(skip)
                 .limit(limit),
             Listing.countDocuments(query)
         ]);
+
+        listings.forEach((listing) => {
+            if (!listing.seller && listing.owner) {
+                listing.seller = listing.owner;
+            }
+        });
 
         // Treat listing impressions as view events for a more realistic marketplace signal.
         if (listings.length > 0) {
@@ -217,8 +246,69 @@ router.get("/locations", async (req, res, next) => {
 
 router.get("/mine", auth, async (req, res, next) => {
     try {
-        const listings = await Listing.find({ seller: req.user.id }).sort({ createdAt: -1 });
+        const listings = await Listing.find({
+            $or: [{ seller: req.user.id }, { owner: req.user.id }]
+        }).sort({ createdAt: -1 });
+        listings.forEach(ensureListingSeller);
         return res.json({ listings });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.get("/inbox", auth, async (req, res, next) => {
+    try {
+        const sellerId = String(req.user.id);
+        const listings = await Listing.find({
+            $or: [{ seller: sellerId }, { owner: sellerId }]
+        })
+            .select("title image location status availability messages updatedAt")
+            .sort({ updatedAt: -1 })
+            .limit(200);
+
+        const threads = listings
+            .map((listing) => {
+                ensureListingSeller(listing);
+                const messages = Array.isArray(listing.messages) ? listing.messages : [];
+                if (messages.length === 0) {
+                    return null;
+                }
+
+                const unreadCount = messages.filter((message) => {
+                    const senderId = normalizeMessageSenderId(message);
+                    return senderId && senderId !== sellerId && !message.readBySeller;
+                }).length;
+
+                const lastMessage = messages[messages.length - 1];
+                const lastSenderId = normalizeMessageSenderId(lastMessage);
+
+                return {
+                    listingId: String(listing._id),
+                    title: listing.title,
+                    image: listing.image,
+                    location: listing.location,
+                    status: listing.status,
+                    availability: listing.availability,
+                    unreadCount,
+                    totalMessages: messages.length,
+                    lastMessage: {
+                        body: lastMessage.body || "",
+                        type: lastMessage.type || "message",
+                        createdAt: lastMessage.createdAt || listing.updatedAt,
+                        fromSeller: lastSenderId === sellerId,
+                        senderName: lastMessage.senderName || ""
+                    }
+                };
+            })
+            .filter(Boolean)
+            .sort((a, b) => new Date(b.lastMessage.createdAt) - new Date(a.lastMessage.createdAt));
+
+        const unreadTotal = threads.reduce((sum, thread) => sum + thread.unreadCount, 0);
+
+        return res.json({
+            threads,
+            unreadTotal
+        });
     } catch (error) {
         return next(error);
     }
@@ -269,6 +359,7 @@ router.post("/", auth, upload.single("image"), async (req, res, next) => {
 
         const listing = await Listing.create({
             seller: req.user.id,
+            owner: req.user.id,
             title,
             description,
             price,
@@ -302,12 +393,15 @@ router.get("/:id", async (req, res, next) => {
         const listing = await Listing.findOne({
             _id: listingId,
             status: "approved"
-        }).populate("seller", "name reputationScore verifiedSeller city");
+        })
+            .populate("seller", "name reputationScore verifiedSeller city")
+            .populate("owner", "name reputationScore verifiedSeller city");
 
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
         }
 
+        ensureListingSeller(listing);
         listing.viewsCount += 1;
         await listing.save();
 
@@ -330,12 +424,13 @@ router.patch("/:id/availability", auth, async (req, res, next) => {
             return res.status(400).json({ message: "Availability must be available, reserved, or sold." });
         }
 
-        const listing = await Listing.findById(listingId).select("seller availability");
+        const listing = await Listing.findById(listingId).select("seller owner availability");
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
         }
+        ensureListingSeller(listing);
 
-        if (String(listing.seller) !== req.user.id) {
+        if (getListingSellerId(listing) !== req.user.id) {
             return res.status(403).json({ message: "Only the seller can update availability." });
         }
 
@@ -371,13 +466,23 @@ router.post("/:id/report", auth, async (req, res, next) => {
         }
 
         const listing = await Listing.findById(listingId).select(
-            "seller reportsCount penalizedForReports status availability"
+            "seller owner reportsCount penalizedForReports status availability"
         );
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
         }
 
-        if (String(listing.seller) === req.user.id) {
+        ensureListingSeller(listing);
+        if (!listing.seller && listing.owner) {
+            listing.seller = listing.owner;
+            await listing.save();
+        }
+        const sellerId = getListingSellerId(listing);
+        if (!sellerId) {
+            return res.status(400).json({ message: "Listing seller is missing. Please contact support." });
+        }
+
+        if (sellerId === req.user.id) {
             return res.status(400).json({ message: "You cannot report your own listing." });
         }
 
@@ -393,7 +498,7 @@ router.post("/:id/report", auth, async (req, res, next) => {
             await Report.create({
                 listing: listing._id,
                 reporter: req.user.id,
-                seller: listing.seller,
+                seller: sellerId,
                 reason,
                 notes
             });
@@ -466,21 +571,37 @@ router.post("/:id/messages", auth, async (req, res, next) => {
             return res.status(400).json({ message: "Offer amount must be at least 50." });
         }
 
-        const listing = await Listing.findById(listingId).select("seller status availability messages");
+        const listing = await Listing.findById(listingId).select(
+            "seller owner status availability messages"
+        );
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
         }
+        ensureListingSeller(listing);
+        if (!listing.seller && listing.owner) {
+            listing.seller = listing.owner;
+        }
 
-        if (listing.status !== "approved" && String(listing.seller) !== req.user.id) {
+        const sellerId = getListingSellerId(listing);
+        if (!sellerId) {
+            return res.status(400).json({ message: "Listing seller is missing. Please contact support." });
+        }
+
+        if (listing.status !== "approved" && sellerId !== req.user.id) {
             return res.status(400).json({ message: "This listing is not open for messaging." });
         }
 
-        if (listing.availability === "sold" && String(listing.seller) !== req.user.id) {
+        if (listing.availability === "sold" && sellerId !== req.user.id) {
             return res.status(400).json({ message: "This listing has already been sold." });
         }
 
         listing.messages.push({
             sender: req.user.id,
+            senderName: req.user.name || "",
+            senderEmail: req.user.email || "",
+            senderPhone: req.user.phoneNumber || "",
+            senderCity: req.user.city || "",
+            readBySeller: sellerId === req.user.id,
             type: hasOffer ? "offer" : "message",
             body: textToSend,
             offerAmount: hasOffer ? Number(offerAmountRaw.toFixed(2)) : null
@@ -495,6 +616,46 @@ router.post("/:id/messages", auth, async (req, res, next) => {
     }
 });
 
+router.patch("/:id/messages/read", auth, async (req, res, next) => {
+    try {
+        const listingId = String(req.params.id || "").trim();
+        if (!isValidObjectId(listingId)) {
+            return res.status(400).json({ message: "Invalid listing ID." });
+        }
+
+        const listing = await Listing.findById(listingId).select("seller owner messages");
+        if (!listing) {
+            return res.status(404).json({ message: "Listing not found." });
+        }
+        ensureListingSeller(listing);
+
+        const sellerId = getListingSellerId(listing);
+        if (sellerId !== req.user.id) {
+            return res.status(403).json({ message: "Only the seller can mark messages as read." });
+        }
+
+        let updated = 0;
+        listing.messages.forEach((message) => {
+            const senderId = normalizeMessageSenderId(message);
+            if (senderId && senderId !== sellerId && !message.readBySeller) {
+                message.readBySeller = true;
+                updated += 1;
+            }
+        });
+
+        if (updated > 0) {
+            await listing.save();
+        }
+
+        return res.json({
+            message: "Messages marked as read.",
+            updated
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 router.get("/:id/messages", auth, async (req, res, next) => {
     try {
         const listingId = String(req.params.id || "").trim();
@@ -503,26 +664,41 @@ router.get("/:id/messages", auth, async (req, res, next) => {
         }
 
         const listing = await Listing.findById(listingId)
-            .select("seller messages")
-            .populate("messages.sender", "name email");
+            .select("seller owner messages")
+            .populate("messages.sender", "name email phoneNumber city");
 
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
         }
+        ensureListingSeller(listing);
 
-        const isSeller = String(listing.seller) === req.user.id;
+        const isSeller = getListingSellerId(listing) === req.user.id;
         const hasConversation = listing.messages.some(
-            (msg) => msg.sender && String(msg.sender._id || msg.sender) === req.user.id
+            (message) => normalizeMessageSenderId(message) === req.user.id
         );
 
         if (!isSeller && !hasConversation) {
             return res.status(403).json({ message: "You are not allowed to view these messages." });
         }
 
+        if (isSeller) {
+            let updated = 0;
+            listing.messages.forEach((message) => {
+                const senderId = normalizeMessageSenderId(message);
+                if (senderId && senderId !== req.user.id && !message.readBySeller) {
+                    message.readBySeller = true;
+                    updated += 1;
+                }
+            });
+            if (updated > 0) {
+                await listing.save();
+            }
+        }
+
         const messages = isSeller
             ? listing.messages
             : listing.messages.filter(
-                  (msg) => msg.sender && String(msg.sender._id || msg.sender) === req.user.id
+                  (msg) => normalizeMessageSenderId(msg) === req.user.id
               );
 
         return res.json({ messages });
@@ -539,10 +715,15 @@ router.post("/:id/pay", auth, async (req, res, next) => {
         }
 
         const listing = await Listing.findById(listingId).select(
-            "seller price status title availability deliveryAvailable"
+            "seller owner price status title availability deliveryAvailable"
         );
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
+        }
+        ensureListingSeller(listing);
+        const sellerId = getListingSellerId(listing);
+        if (!sellerId) {
+            return res.status(400).json({ message: "Listing seller is missing. Please contact support." });
         }
 
         if (listing.status !== "approved") {
@@ -557,7 +738,7 @@ router.post("/:id/pay", auth, async (req, res, next) => {
             return res.status(400).json({ message: "This listing is currently reserved." });
         }
 
-        if (String(listing.seller) === req.user.id) {
+        if (sellerId === req.user.id) {
             return res.status(400).json({ message: "You cannot pay for your own listing." });
         }
 
@@ -576,7 +757,7 @@ router.post("/:id/pay", auth, async (req, res, next) => {
         if (paymentStatus === "success") {
             await Promise.all([
                 adjustReputation(req.user.id, 1),
-                adjustReputation(listing.seller, 2)
+                adjustReputation(sellerId, 2)
             ]);
         }
 

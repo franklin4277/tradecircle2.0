@@ -26,6 +26,7 @@
 
         await hydrateCurrentUser();
         setupNavigation(page);
+        setupAutoHidingHeader();
 
         try {
             if (page === "index") {
@@ -51,6 +52,41 @@
             showToast(error.message || "Unable to load this page right now.", "error");
         }
     });
+
+    function setupAutoHidingHeader() {
+        const navbar = document.querySelector(".navbar");
+        if (!navbar) {
+            return;
+        }
+
+        let lastScrollY = window.scrollY || 0;
+        let ticking = false;
+
+        window.addEventListener(
+            "scroll",
+            () => {
+                if (ticking) {
+                    return;
+                }
+
+                ticking = true;
+                window.requestAnimationFrame(() => {
+                    const currentY = window.scrollY || 0;
+                    const scrollingDown = currentY > lastScrollY;
+
+                    if (scrollingDown && currentY > 80) {
+                        navbar.classList.add("navbar-hidden");
+                    } else {
+                        navbar.classList.remove("navbar-hidden");
+                    }
+
+                    lastScrollY = currentY;
+                    ticking = false;
+                });
+            },
+            { passive: true }
+        );
+    }
 
     function getToken() {
         return localStorage.getItem(TOKEN_KEY);
@@ -914,12 +950,15 @@
         const listingForm = document.getElementById("listingForm");
         const myListings = document.getElementById("myListings");
         const refreshBtn = document.getElementById("refreshListingsBtn");
+        const sellerInbox = document.getElementById("sellerInbox");
+        const inboxBadge = document.getElementById("inboxBadge");
 
         if (!profileCard || !listingForm || !myListings) {
             return;
         }
 
         renderProfileCard(profileCard, state.user);
+        await loadSellerInbox(sellerInbox, inboxBadge);
 
         listingForm.addEventListener("submit", async (event) => {
             event.preventDefault();
@@ -958,7 +997,8 @@
 
             try {
                 if (action === "view-messages") {
-                    await loadListingMessages(listingId);
+                    await loadListingMessages(listingId, true);
+                    await loadSellerInbox(sellerInbox, inboxBadge);
                 }
 
                 if (action === "mark-available") {
@@ -983,7 +1023,28 @@
         if (refreshBtn) {
             refreshBtn.addEventListener("click", async () => {
                 await loadMyListings(myListings);
+                await loadSellerInbox(sellerInbox, inboxBadge);
                 showToast("Listings refreshed.", "success");
+            });
+        }
+
+        if (sellerInbox) {
+            sellerInbox.addEventListener("click", async (event) => {
+                const button = event.target.closest("button[data-action='open-thread']");
+                if (!button) {
+                    return;
+                }
+                const listingId = button.dataset.id;
+                if (!listingId) {
+                    return;
+                }
+
+                try {
+                    await loadListingMessages(listingId, true);
+                    await loadSellerInbox(sellerInbox, inboxBadge);
+                } catch (error) {
+                    showToast(error.message || "Unable to open conversation.", "error");
+                }
             });
         }
 
@@ -1000,6 +1061,63 @@
             <div class="profile-row"><span>City</span><strong>${escapeHtml(user.city || "Not set")}</strong></div>
             <div class="profile-row"><span>Seller Badge</span><strong>${user.verifiedSeller ? "Verified" : "Standard"}</strong></div>
         `;
+    }
+
+    async function loadSellerInbox(container, badgeElement) {
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = "<p class=\"empty-state\">Loading inbox...</p>";
+
+        const data = await apiRequest("/listings/inbox", {}, true);
+        const threads = Array.isArray(data.threads) ? data.threads : [];
+        const unreadTotal = Number(data.unreadTotal || 0);
+
+        if (badgeElement) {
+            badgeElement.textContent = `Unread: ${unreadTotal}`;
+            badgeElement.className = unreadTotal > 0 ? "badge badge-warning" : "badge badge-approved";
+        }
+
+        if (threads.length === 0) {
+            container.innerHTML = "<p class=\"empty-state\">No buyer messages yet.</p>";
+            return;
+        }
+
+        container.innerHTML = threads
+            .map((thread) => {
+                const unread = Number(thread.unreadCount || 0);
+                const unreadChip = unread > 0 ? `<span class="chip chip-warning">${unread} unread</span>` : "";
+                const lastBody = thread.lastMessage && thread.lastMessage.body ? thread.lastMessage.body : "";
+                const lastTime =
+                    thread.lastMessage && thread.lastMessage.createdAt
+                        ? formatRelativeTime(thread.lastMessage.createdAt)
+                        : "recent";
+
+                return `
+                    <article class="inbox-item ${unread > 0 ? "unread" : ""}">
+                        <div class="inbox-top">
+                            <p class="inbox-title">${escapeHtml(thread.title || "Listing")}</p>
+                            <div class="meta-chips">
+                                ${unreadChip}
+                                <span class="chip">${escapeHtml(thread.availability || "available")}</span>
+                            </div>
+                        </div>
+                        <p class="inbox-meta">${escapeHtml(thread.location || "Unknown location")} · ${escapeHtml(
+                    lastTime
+                )}</p>
+                        <p class="card-hint">${escapeHtml(truncate(lastBody, 120))}</p>
+                        <div class="card-actions">
+                            <button class="btn btn-secondary" type="button" data-action="open-thread" data-id="${escapeHtml(
+                                thread.listingId
+                            )}">
+                                Open Conversation
+                            </button>
+                        </div>
+                    </article>
+                `;
+            })
+            .join("");
     }
 
     async function loadMyListings(container) {
@@ -1093,7 +1211,7 @@
         return card;
     }
 
-    async function loadListingMessages(listingId) {
+    async function loadListingMessages(listingId, markReadForSeller = false) {
         const panel = document.getElementById("messagePanel");
         if (!panel) {
             return;
@@ -1104,6 +1222,20 @@
         const data = await apiRequest(`/listings/${listingId}/messages`, {}, true);
         const messages = Array.isArray(data.messages) ? data.messages : [];
 
+        if (markReadForSeller) {
+            try {
+                await apiRequest(
+                    `/listings/${listingId}/messages/read`,
+                    {
+                        method: "PATCH"
+                    },
+                    true
+                );
+            } catch {
+                // Ignore if current user is not the seller for this listing.
+            }
+        }
+
         if (!messages.length) {
             panel.innerHTML = "<p class=\"muted\">No messages yet for this listing.</p>";
             return;
@@ -1112,17 +1244,31 @@
         panel.innerHTML = messages
             .map((message) => {
                 const senderName =
-                    message.sender && message.sender.name ? message.sender.name : "Marketplace user";
+                    (message.sender && message.sender.name) || message.senderName || "Marketplace user";
+                const senderEmail =
+                    (message.sender && message.sender.email) || message.senderEmail || "";
+                const senderPhone =
+                    (message.sender && message.sender.phoneNumber) || message.senderPhone || "";
+                const senderCity =
+                    (message.sender && message.sender.city) || message.senderCity || "";
                 const offerTag =
                     typeof message.offerAmount === "number" && message.offerAmount > 0
                         ? ` <strong>Offer: ${escapeHtml(formatCurrency(message.offerAmount))}</strong>`
                         : "";
+                const contactInfo = [senderEmail, senderPhone, senderCity]
+                    .filter((value) => String(value || "").trim())
+                    .join(" | ");
 
                 return `
                     <article class="message-item">
                         <p class="message-meta">${escapeHtml(senderName)} · ${formatRelativeTime(
                     message.createdAt
                 )}${offerTag}</p>
+                        ${
+                            contactInfo
+                                ? `<p class="message-meta">Contact: ${escapeHtml(contactInfo)}</p>`
+                                : ""
+                        }
                         <p class="message-text">${escapeHtml(message.body)}</p>
                     </article>
                 `;

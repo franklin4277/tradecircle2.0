@@ -22,10 +22,15 @@ admin analytics, messaging, and a simulated M-Pesa payment action.
 - `middleware/`
   - `auth.js`
   - `rateLimit.js`
+  - `sanitize.js`
 - `routes/`
   - `auth.js`
   - `listings.js`
   - `admin.js`
+- `scripts/`
+  - `migrate-owner-to-seller.js`
+- `tests/`
+  - `api-flows.test.js`
 - `public/`
   - `index.html`
   - `login.html`
@@ -48,6 +53,7 @@ admin analytics, messaging, and a simulated M-Pesa payment action.
 - Automatic seller reputation penalty after report threshold
 - Admin analytics (users, listings, reports, statuses)
 - Messaging on listings
+- Seller inbox with unread counts + mark-as-read flow
 - Simulated M-Pesa payment action
 - Basic in-memory API rate limiting
 
@@ -55,6 +61,14 @@ admin analytics, messaging, and a simulated M-Pesa payment action.
 
 ```bash
 npm install
+```
+
+## Available Scripts
+
+```bash
+npm start
+npm test
+npm run migrate:owner-to-seller
 ```
 
 ## 2. Configure Environment
@@ -80,10 +94,22 @@ REPORT_PENALTY=10
 CORS_ORIGIN=http://localhost:5000
 ```
 
+Production notes:
+
+- `JWT_SECRET` is required.
+- `CORS_ORIGIN` must be a comma-separated list of valid `http(s)` origins.
+- In production, `CORS_ORIGIN` must be set.
+
 ## 3. Run
 
 ```bash
 node server.js
+```
+
+If you have old listings from earlier schema versions, run the migration once:
+
+```bash
+npm run migrate:owner-to-seller
 ```
 
 Open:
@@ -107,6 +133,8 @@ Open:
 - Password hashing with bcrypt
 - Server-side validation
 - Route protection by role
+- `helmet` security headers
+- Request key sanitization to block `$` and `.` operator injection patterns
 - Basic rate limiting middleware
 - Image type/size checks for uploads
 

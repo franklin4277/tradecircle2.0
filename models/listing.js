@@ -7,6 +7,34 @@ const listingMessageSchema = new mongoose.Schema(
             ref: "User",
             required: true
         },
+        senderName: {
+            type: String,
+            trim: true,
+            maxlength: 80,
+            default: ""
+        },
+        senderEmail: {
+            type: String,
+            trim: true,
+            maxlength: 120,
+            default: ""
+        },
+        senderPhone: {
+            type: String,
+            trim: true,
+            maxlength: 24,
+            default: ""
+        },
+        senderCity: {
+            type: String,
+            trim: true,
+            maxlength: 80,
+            default: ""
+        },
+        readBySeller: {
+            type: Boolean,
+            default: false
+        },
         type: {
             type: String,
             enum: ["message", "offer"],
@@ -38,6 +66,11 @@ const listingSchema = new mongoose.Schema(
             ref: "User",
             required: true,
             index: true
+        },
+        owner: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null
         },
         title: {
             type: String,
@@ -94,9 +127,10 @@ const listingSchema = new mongoose.Schema(
         },
         contactPhone: {
             type: String,
-            required: true,
+            required: false,
             trim: true,
-            maxlength: 24
+            maxlength: 24,
+            default: ""
         },
         deliveryAvailable: {
             type: Boolean,
@@ -138,5 +172,11 @@ const listingSchema = new mongoose.Schema(
 
 listingSchema.index({ title: "text", description: "text" });
 listingSchema.index({ status: 1, category: 1, location: 1, price: 1 });
+
+listingSchema.pre("validate", function setLegacySeller() {
+    if (!this.seller && this.owner) {
+        this.seller = this.owner;
+    }
+});
 
 module.exports = mongoose.model("Listing", listingSchema);

@@ -57,6 +57,11 @@ img {
     border-bottom: 1px solid var(--border);
     background: rgba(255, 255, 255, 0.9);
     backdrop-filter: blur(10px);
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+}
+
+.navbar-hidden {
+    transform: translateY(-115%);
 }
 
 .nav-inner {
@@ -456,6 +461,11 @@ select:focus {
     color: #8f5600;
 }
 
+.badge-warning {
+    background: var(--warning-soft);
+    color: #8f5600;
+}
+
 .badge-approved {
     background: var(--success-soft);
     color: #107641;
@@ -601,6 +611,45 @@ select:focus {
     min-height: 120px;
     display: grid;
     gap: 0.6rem;
+}
+
+.inbox-list {
+    display: grid;
+    gap: 0.6rem;
+}
+
+.inbox-item {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: #fff;
+    padding: 0.7rem;
+    display: grid;
+    gap: 0.45rem;
+}
+
+.inbox-item.unread {
+    border-color: #95bfff;
+    box-shadow: 0 6px 14px rgba(0, 102, 255, 0.08);
+}
+
+.inbox-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.inbox-title {
+    margin: 0;
+    font-weight: 700;
+    color: #103362;
+}
+
+.inbox-meta {
+    margin: 0;
+    font-size: 0.82rem;
+    color: #4f6890;
 }
 
 .message-item {

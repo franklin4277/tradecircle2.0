@@ -1,9 +1,16 @@
 ﻿const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 
-const JWT_SECRET = process.env.JWT_SECRET || "change-this-secret";
+const JWT_SECRET = process.env.JWT_SECRET;
+
+function ensureJwtSecret() {
+    if (!JWT_SECRET) {
+        throw new Error("JWT_SECRET environment variable is required.");
+    }
+}
 
 function generateToken(user) {
+    ensureJwtSecret();
     return jwt.sign({ id: String(user._id) }, JWT_SECRET, { expiresIn: "7d" });
 }
 
@@ -18,8 +25,11 @@ async function auth(req, res, next) {
             return res.status(401).json({ message: "Authorization token missing." });
         }
 
+        ensureJwtSecret();
         const payload = jwt.verify(token, JWT_SECRET);
-        const user = await User.findById(payload.id).select("name email role reputationScore");
+        const user = await User.findById(payload.id).select(
+            "name email role reputationScore phoneNumber city verifiedSeller"
+        );
 
         if (!user) {
             return res.status(401).json({ message: "Invalid token user." });
@@ -30,7 +40,10 @@ async function auth(req, res, next) {
             name: user.name,
             email: user.email,
             role: user.role,
-            reputationScore: user.reputationScore
+            reputationScore: user.reputationScore,
+            phoneNumber: user.phoneNumber || "",
+            city: user.city || "",
+            verifiedSeller: !!user.verifiedSeller
         };
 
         return next();

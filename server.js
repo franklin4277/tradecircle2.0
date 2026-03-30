@@ -6,12 +6,14 @@ const path = require("path");
 const fs = require("fs");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
+const helmet = require("helmet");
 
 const User = require("./models/user");
 const authRoutes = require("./routes/auth");
 const listingRoutes = require("./routes/listings");
 const adminRoutes = require("./routes/admin");
 const { createRateLimiter } = require("./middleware/rateLimit");
+const { sanitizeRequest } = require("./middleware/sanitize");
 
 const app = express();
 
@@ -25,16 +27,60 @@ if (!fs.existsSync(uploadsDir)) {
 }
 
 const corsOrigin = process.env.CORS_ORIGIN;
-const corsOptions = corsOrigin
-    ? {
-          origin: corsOrigin.split(",").map((origin) => origin.trim()),
-          methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-      }
-    : {};
+const nodeEnv = String(process.env.NODE_ENV || "development").trim().toLowerCase();
+
+function parseAllowedOrigins(originConfig) {
+    const fallbackOrigins = ["http://localhost:5000", "http://127.0.0.1:5000"];
+    if (!originConfig) {
+        if (nodeEnv === "production") {
+            throw new Error("CORS_ORIGIN is required in production.");
+        }
+        return fallbackOrigins;
+    }
+
+    const origins = originConfig
+        .split(",")
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+
+    if (origins.length === 0) {
+        throw new Error("CORS_ORIGIN is empty. Provide comma-separated allowed origins.");
+    }
+
+    const invalidOrigins = origins.filter((origin) => !/^https?:\/\/[^/\s]+/i.test(origin));
+    if (invalidOrigins.length > 0) {
+        throw new Error(`Invalid CORS origin(s): ${invalidOrigins.join(", ")}`);
+    }
+
+    return origins;
+}
+
+const allowedOrigins = parseAllowedOrigins(corsOrigin);
+const corsOptions = {
+    origin: (origin, callback) => {
+        if (!origin) {
+            return callback(null, true);
+        }
+
+        if (allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error("CORS policy blocked this origin."));
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true
+};
 
 app.use(cors(corsOptions));
+app.use(
+    helmet({
+        crossOriginResourcePolicy: { policy: "cross-origin" }
+    })
+);
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(sanitizeRequest);
 
 app.use((req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -129,9 +175,20 @@ async function ensureAdminUser() {
 
 async function startServer() {
     const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+    const jwtSecret = String(process.env.JWT_SECRET || "");
     if (!mongoUri) {
         // eslint-disable-next-line no-console
         console.error("Missing MongoDB URI. Set MONGO_URI in your environment.");
+        process.exit(1);
+    }
+    if (!jwtSecret) {
+        // eslint-disable-next-line no-console
+        console.error("Missing JWT_SECRET in environment.");
+        process.exit(1);
+    }
+    if (jwtSecret.length < 16 && nodeEnv === "production") {
+        // eslint-disable-next-line no-console
+        console.error("JWT_SECRET must be at least 16 characters in production.");
         process.exit(1);
     }
 
@@ -140,10 +197,11 @@ async function startServer() {
         await ensureAdminUser();
 
         const port = Number(process.env.PORT || 5000);
-        app.listen(port, () => {
+        const server = app.listen(port, () => {
             // eslint-disable-next-line no-console
             console.log(`TradeCircle server running at http://localhost:${port}`);
         });
+        return server;
     } catch (error) {
         // eslint-disable-next-line no-console
         console.error("Failed to start server:", error.message);
@@ -151,4 +209,12 @@ async function startServer() {
     }
 }
 
-startServer();
+if (require.main === module) {
+    startServer();
+}
+
+module.exports = {
+    app,
+    startServer,
+    ensureAdminUser
+};
