@@ -1,512 +1,154 @@
-require("dotenv").config();
+﻿require("dotenv").config();
 
 const express = require("express");
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const cors = require("cors");
-const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-const crypto = require("crypto");
+const cors = require("cors");
+const bcrypt = require("bcryptjs");
 
 const User = require("./models/user");
-const Listing = require("./models/listing");
+const authRoutes = require("./routes/auth");
+const listingRoutes = require("./routes/listings");
+const adminRoutes = require("./routes/admin");
+const { createRateLimiter } = require("./middleware/rateLimit");
 
 const app = express();
-const corsOrigin = process.env.CORS_ORIGIN;
-app.use(cors(corsOrigin ? { origin: corsOrigin } : {}));
-app.use(express.json());
 
-app.use(express.static("public"));
+app.disable("x-powered-by");
+
+const publicDir = path.join(__dirname, "public");
 const uploadsDir = path.join(__dirname, "uploads");
+
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
+
+const corsOrigin = process.env.CORS_ORIGIN;
+const corsOptions = corsOrigin
+    ? {
+          origin: corsOrigin.split(",").map((origin) => origin.trim()),
+          methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+      }
+    : {};
+
+app.use(cors(corsOptions));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+app.use((req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    return next();
+});
+
+const apiLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 250,
+    message: "Too many requests from this IP. Please try again in a few minutes."
+});
+
+const authLimiter = createRateLimiter({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    message: "Too many authentication requests. Please wait and try again."
+});
+
+app.use("/api", apiLimiter);
+app.use("/api/auth", authLimiter);
+
 app.use("/uploads", express.static(uploadsDir));
+app.use(express.static(publicDir));
 
-const cloudinaryConfig = {
-    cloudName: process.env.CLOUDINARY_CLOUD_NAME || "",
-    apiKey: process.env.CLOUDINARY_API_KEY || "",
-    apiSecret: process.env.CLOUDINARY_API_SECRET || ""
-};
-const useCloudinary = !!(
-    cloudinaryConfig.cloudName &&
-    cloudinaryConfig.apiKey &&
-    cloudinaryConfig.apiSecret
-);
-const isProduction = process.env.NODE_ENV === "production";
-
-if (isProduction && !useCloudinary) {
-    console.warn("Cloudinary is not configured in production. Image uploads will be blocked until CLOUDINARY_* vars are set.");
-}
-
-async function uploadToCloudinary(file) {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const folder = process.env.CLOUDINARY_FOLDER || "tradecircle";
-    const paramsToSign = `folder=${folder}&timestamp=${timestamp}${cloudinaryConfig.apiSecret}`;
-    const signature = crypto.createHash("sha1").update(paramsToSign).digest("hex");
-    const form = new FormData();
-    const originalName = path.basename(file.originalname || "upload.jpg");
-    const blob = new Blob([file.buffer], { type: file.mimetype || "application/octet-stream" });
-    form.append("file", blob, originalName);
-    form.append("api_key", cloudinaryConfig.apiKey);
-    form.append("timestamp", String(timestamp));
-    form.append("folder", folder);
-    form.append("signature", signature);
-
-    const endpoint = `https://api.cloudinary.com/v1_1/${cloudinaryConfig.cloudName}/image/upload`;
-    const response = await fetch(endpoint, {
-        method: "POST",
-        body: form
-    });
-    const data = await response.json();
-    if (!response.ok || !data.secure_url) {
-        const msg = data && data.error && data.error.message
-            ? data.error.message
-            : "Cloudinary upload failed";
-        throw new Error(msg);
-    }
-    return data.secure_url;
-}
-
-// Multer setup for image uploads
-const diskStorage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, uploadsDir);
-    },
-    filename: function (req, file, cb) {
-        const ext = path.extname(file.originalname);
-        cb(null, Date.now() + ext);
-    }
+app.get("/health", (_, res) => {
+    return res.json({ status: "ok", service: "TradeCircle API" });
 });
-const upload = multer({
-    storage: useCloudinary ? multer.memoryStorage() : diskStorage,
-    limits: { fileSize: 5 * 1024 * 1024 },
-    fileFilter: (req, file, cb) => {
-        if (!file.mimetype.startsWith("image/")) {
-            return cb(new Error("Only image uploads are allowed"));
+
+app.use("/api/auth", authRoutes);
+app.use("/api/listings", listingRoutes);
+app.use("/api/admin", adminRoutes);
+
+app.get("/", (_, res) => {
+    return res.sendFile(path.join(publicDir, "index.html"));
+});
+
+app.use((req, res) => {
+    if (req.path.startsWith("/api")) {
+        return res.status(404).json({ message: "API route not found." });
+    }
+
+    return res.status(404).sendFile(path.join(publicDir, "index.html"));
+});
+
+app.use((error, req, res, next) => {
+    if (error && error.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ message: "Image too large. Maximum file size is 5MB." });
+    }
+
+    if (error && String(error.message || "").includes("Only image files are allowed")) {
+        return res.status(400).json({ message: "Only image files are allowed." });
+    }
+
+    if (error && error.name === "ValidationError") {
+        return res.status(400).json({ message: error.message });
+    }
+
+    // eslint-disable-next-line no-console
+    console.error(error);
+    return res.status(500).json({ message: "Something went wrong on the server." });
+});
+
+async function ensureAdminUser() {
+    const adminEmail = String(process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+    const adminPassword = String(process.env.ADMIN_PASSWORD || "");
+    const adminName = String(process.env.ADMIN_NAME || "TradeCircle Admin").trim();
+
+    if (!adminEmail || !adminPassword) {
+        return;
+    }
+
+    const existingAdmin = await User.findOne({ email: adminEmail });
+    if (existingAdmin) {
+        if (existingAdmin.role !== "admin") {
+            existingAdmin.role = "admin";
+            await existingAdmin.save();
         }
-        cb(null, true);
+        return;
     }
-});
 
-const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
-if (!mongoUri) {
-    console.error("Missing MongoDB connection string in MONGO_URI or MONGODB_URI. Set it in .env or the environment.");
-    process.exit(1);
-}
-
-mongoose.connect(mongoUri)
-    .then(() => console.log("MongoDB Connected"))
-    .catch(err => {
-        console.error("MongoDB connection error:", err);
-        process.exit(1);
-    });
-
-const JWT_SECRET = process.env.JWT_SECRET || "changeme";
-if (JWT_SECRET === "changeme") {
-    console.warn("Warning: JWT_SECRET is using the default value. Set JWT_SECRET in your environment.");
-}
-
-function isValidObjectId(id) {
-    return mongoose.Types.ObjectId.isValid(String(id || ""));
-}
-
-async function countActiveAdmins() {
-    return User.countDocuments({
+    const hashedPassword = await bcrypt.hash(adminPassword, 12);
+    await User.create({
+        name: adminName,
+        email: adminEmail,
+        password: hashedPassword,
         role: "admin",
-        $or: [{ isActive: true }, { isActive: { $exists: false } }]
+        reputationScore: 200
     });
 }
 
-// Authentication middleware
-const auth = async (req, res, next) => {
-    const authHeader = req.headers["authorization"] || "";
-    const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : authHeader;
-    if (!token) return res.status(401).json({ msg: "No token" });
-
-    try {
-        const verified = jwt.verify(token, JWT_SECRET);
-        const user = await User.findById(verified.id).select("_id role isActive");
-        if (!user) return res.status(401).json({ msg: "User not found" });
-        if (user.isActive === false) return res.status(403).json({ msg: "Account suspended" });
-        req.user = { id: String(user._id), role: user.role };
-        next();
-    } catch (err) {
-        res.status(401).json({ msg: "Invalid token" });
+async function startServer() {
+    const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
+    if (!mongoUri) {
+        // eslint-disable-next-line no-console
+        console.error("Missing MongoDB URI. Set MONGO_URI in your environment.");
+        process.exit(1);
     }
-};
 
-// Admin check middleware
-const requireAdmin = (req, res, next) => {
-    if (req.user && req.user.role === "admin") return next();
-    return res.status(403).json({ msg: "Admin required" });
-};
-
-/* ---------------- Registration ---------------- */
-app.post("/api/register", async (req, res) => {
     try {
-        const { name, email, password, contact, bio, location } = req.body;
-        if (!name || !email || !password) {
-            return res.status(400).json({ msg: "Name, email, and password are required" });
-        }
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-            return res.status(400).json({ msg: "Invalid email format" });
-        }
-        if (String(password).length < 6) {
-            return res.status(400).json({ msg: "Password must be at least 6 characters" });
-        }
+        await mongoose.connect(mongoUri);
+        await ensureAdminUser();
 
-        const existing = await User.findOne({ email });
-        if (existing) return res.status(400).json({ msg: "Email already exists" });
-
-        const hashed = await bcrypt.hash(password, 10);
-        const user = await User.create({
-            name: String(name).trim(),
-            email: String(email).trim().toLowerCase(),
-            password: hashed,
-            contact: contact ? String(contact).trim() : "",
-            profile: {
-                bio: bio ? String(bio).trim() : "",
-                location: location ? String(location).trim() : ""
-            }
+        const port = Number(process.env.PORT || 5000);
+        app.listen(port, () => {
+            // eslint-disable-next-line no-console
+            console.log(`TradeCircle server running at http://localhost:${port}`);
         });
-        res.json({
-            msg: "Registered successfully",
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                contact: user.contact,
-                profile: user.profile,
-                role: user.role
-            }
-        });
-    } catch (err) {
-        res.status(400).json({ msg: err.message || "Registration failed" });
+    } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error("Failed to start server:", error.message);
+        process.exit(1);
     }
-});
+}
 
-/* ---------------- Login ---------------- */
-app.post("/api/login", async (req, res) => {
-    try {
-        const { email, password } = req.body;
-        if (!email || !password) {
-            return res.status(400).json({ msg: "Email and password are required" });
-        }
-
-        const user = await User.findOne({ email: String(email).trim().toLowerCase() });
-        if (!user) return res.status(400).json({ msg: "Invalid email" });
-
-        if (user.isActive === false) return res.status(403).json({ msg: "Account suspended. Contact admin." });
-
-        const match = await bcrypt.compare(password, user.password);
-        if (!match) return res.status(400).json({ msg: "Wrong password" });
-
-        const token = jwt.sign({ id: user._id, role: user.role }, JWT_SECRET);
-        res.json({
-            token,
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                contact: user.contact,
-                profile: user.profile || {},
-                role: user.role,
-                isActive: user.isActive !== false
-            }
-        });
-    } catch (err) {
-        res.status(500).json({ msg: err.message });
-    }
-});
-
-/* ---------------- User Profile ---------------- */
-app.get("/api/profile", auth, async (req, res) => {
-    try {
-        const user = await User.findById(req.user.id).select("name email contact profile role isActive");
-        if (!user) return res.status(404).json({ msg: "User not found" });
-        res.json({
-            id: user._id,
-            name: user.name,
-            email: user.email,
-            contact: user.contact || "",
-            profile: user.profile || {},
-            role: user.role,
-            isActive: user.isActive !== false
-        });
-    } catch (err) {
-        res.status(500).json({ msg: err.message || "Failed to load profile" });
-    }
-});
-
-app.put("/api/profile", auth, async (req, res) => {
-    try {
-        const { name, contact, bio, location } = req.body;
-        const update = {};
-        if (typeof name === "string") update.name = name.trim();
-        if (typeof contact === "string") update.contact = contact.trim();
-        if (typeof bio === "string") update["profile.bio"] = bio.trim();
-        if (typeof location === "string") update["profile.location"] = location.trim();
-
-        if (Object.keys(update).length === 0) {
-            return res.status(400).json({ msg: "No profile fields provided" });
-        }
-
-        const user = await User.findByIdAndUpdate(
-            req.user.id,
-            { $set: update },
-            { new: true, runValidators: true, fields: "name email contact profile role isActive" }
-        );
-        if (!user) return res.status(404).json({ msg: "User not found" });
-
-        res.json({
-            msg: "Profile updated",
-            user: {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                contact: user.contact || "",
-                profile: user.profile || {},
-                role: user.role,
-                isActive: user.isActive !== false
-            }
-        });
-    } catch (err) {
-        res.status(400).json({ msg: err.message || "Failed to update profile" });
-    }
-});
-
-/* ---------------- Add Listing ---------------- */
-app.post("/api/listing", auth, upload.single("picture"), async (req, res) => {
-    try {
-        const { title, price, description, category, location, contactPlatform, contactLink } = req.body;
-        if (!title || !price || !description) {
-            return res.status(400).json({ msg: "Title, price, and description are required" });
-        }
-        if (req.file && isProduction && !useCloudinary) {
-            return res.status(503).json({
-                msg: "Image upload is disabled until Cloudinary is configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET."
-            });
-        }
-        let picture;
-        if (req.file) {
-            picture = useCloudinary
-                ? await uploadToCloudinary(req.file)
-                : `/uploads/${req.file.filename}`;
-        }
-        const listingData = {
-            title: String(title).trim(),
-            price: String(price).trim(),
-            description: String(description).trim(),
-            category: category ? String(category).trim() : "Other",
-            location: location ? String(location).trim() : "All Kenya",
-            contactPlatform: contactPlatform ? String(contactPlatform).trim() : "Phone",
-            contactLink: contactLink ? String(contactLink).trim() : "",
-            picture,
-            status: "pending",
-            owner: req.user && req.user.id ? req.user.id : undefined
-        };
-        const listing = await Listing.create(listingData);
-        res.json({ msg: "Listing submitted for approval", listing });
-    } catch (err) {
-        res.status(400).json({ msg: err.message });
-    }
-});
-
-/* ---------------- Get All Approved Listings ---------------- */
-app.get("/api/listings", async (req, res) => {
-    try {
-        const listings = await Listing.find({ status: "approved" }).populate({
-            path: "owner",
-            select: "name email contact profile"
-        });
-        res.json(listings);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/* ---------------- Health ---------------- */
-app.get("/health", (req, res) => {
-    res.json({ ok: true });
-});
-
-/* ---------------- Admin Pending Listings ---------------- */
-app.get("/api/admin/pending", auth, requireAdmin, async (req, res) => {
-    try {
-        const listings = await Listing.find({ status: "pending" }).sort({ createdAt: -1 }).populate({
-            path: "owner",
-            select: "name email contact profile role isActive"
-        });
-        res.json(listings);
-    } catch (err) {
-        res.status(500).json({ msg: err.message });
-    }
-});
-
-/* ---------------- Admin All Listings ---------------- */
-app.get("/api/admin/listings", auth, requireAdmin, async (req, res) => {
-    try {
-        const status = String(req.query.status || "all");
-        const query = ["pending", "approved", "rejected", "taken_down"].includes(status) ? { status } : {};
-        const listings = await Listing.find(query).sort({ createdAt: -1 }).populate({
-            path: "owner",
-            select: "name email contact profile role isActive"
-        });
-        res.json(listings);
-    } catch (err) {
-        res.status(500).json({ msg: err.message });
-    }
-});
-
-/* ---------------- Admin Approve ---------------- */
-app.post("/api/admin/approve", auth, requireAdmin, async (req, res) => {
-    try {
-        const id = req.body.id;
-        if (!id) return res.status(400).json({ msg: "Listing id is required" });
-        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid listing id" });
-        const listing = await Listing.findByIdAndUpdate(id, { status: "approved" }, { new: true });
-        if (!listing) return res.status(404).json({ msg: "Listing not found" });
-        res.json({ msg: "Listing approved" });
-    } catch (err) {
-        res.status(400).json({ msg: err.message });
-    }
-});
-
-/* ---------------- Admin Reject ---------------- */
-app.post("/api/admin/reject", auth, requireAdmin, async (req, res) => {
-    try {
-        const id = req.body.id;
-        if (!id) return res.status(400).json({ msg: "Listing id is required" });
-        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid listing id" });
-        const listing = await Listing.findByIdAndUpdate(id, { status: "rejected" }, { new: true });
-        if (!listing) return res.status(404).json({ msg: "Listing not found" });
-        res.json({ msg: "Listing rejected" });
-    } catch (err) {
-        res.status(400).json({ msg: err.message });
-    }
-});
-
-/* ---------------- Admin Take Down Listing ---------------- */
-app.post("/api/admin/takedown", auth, requireAdmin, async (req, res) => {
-    try {
-        const id = req.body.id;
-        if (!id) return res.status(400).json({ msg: "Listing id is required" });
-        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid listing id" });
-        const listing = await Listing.findByIdAndUpdate(id, { status: "taken_down" }, { new: true });
-        if (!listing) return res.status(404).json({ msg: "Listing not found" });
-        res.json({ msg: "Listing taken down" });
-    } catch (err) {
-        res.status(400).json({ msg: err.message });
-    }
-});
-
-/* ---------------- Admin Restore Listing ---------------- */
-app.post("/api/admin/restore", auth, requireAdmin, async (req, res) => {
-    try {
-        const id = req.body.id;
-        if (!id) return res.status(400).json({ msg: "Listing id is required" });
-        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid listing id" });
-        const listing = await Listing.findByIdAndUpdate(id, { status: "approved" }, { new: true });
-        if (!listing) return res.status(404).json({ msg: "Listing not found" });
-        res.json({ msg: "Listing restored to approved" });
-    } catch (err) {
-        res.status(400).json({ msg: err.message });
-    }
-});
-
-/* ---------------- Admin Manage Users ---------------- */
-app.get("/api/admin/users", auth, requireAdmin, async (req, res) => {
-    try {
-        const users = await User.find({})
-            .sort({ createdAt: -1 })
-            .select("name email contact profile role isActive createdAt");
-        res.json(users);
-    } catch (err) {
-        res.status(500).json({ msg: err.message });
-    }
-});
-
-app.post("/api/admin/users/role", auth, requireAdmin, async (req, res) => {
-    try {
-        const { id, role } = req.body;
-        if (!id) return res.status(400).json({ msg: "User id is required" });
-        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid user id" });
-        if (!["user", "admin"].includes(role)) {
-            return res.status(400).json({ msg: "Role must be user or admin" });
-        }
-        if (String(id) === String(req.user.id) && role !== "admin") {
-            return res.status(400).json({ msg: "You cannot remove your own admin role" });
-        }
-        const existingUser = await User.findById(id).select("role isActive");
-        if (!existingUser) return res.status(404).json({ msg: "User not found" });
-        const existingIsActive = existingUser.isActive !== false;
-        if (existingUser.role === "admin" && role !== "admin" && existingIsActive) {
-            const activeAdminCount = await countActiveAdmins();
-            if (activeAdminCount <= 1) {
-                return res.status(400).json({ msg: "Cannot remove the last active admin" });
-            }
-        }
-        const user = await User.findByIdAndUpdate(
-            id,
-            { role },
-            { new: true, runValidators: true, fields: "name email role isActive" }
-        );
-        res.json({ msg: `User role updated to ${user.role}`, user });
-    } catch (err) {
-        res.status(400).json({ msg: err.message });
-    }
-});
-
-app.post("/api/admin/users/status", auth, requireAdmin, async (req, res) => {
-    try {
-        const { id, isActive } = req.body;
-        if (!id) return res.status(400).json({ msg: "User id is required" });
-        if (!isValidObjectId(id)) return res.status(400).json({ msg: "Invalid user id" });
-        if (typeof isActive !== "boolean") {
-            return res.status(400).json({ msg: "isActive must be boolean" });
-        }
-        if (String(id) === String(req.user.id) && !isActive) {
-            return res.status(400).json({ msg: "You cannot suspend your own account" });
-        }
-        const existingUser = await User.findById(id).select("role isActive");
-        if (!existingUser) return res.status(404).json({ msg: "User not found" });
-        const existingIsActive = existingUser.isActive !== false;
-        if (existingUser.role === "admin" && existingIsActive && !isActive) {
-            const activeAdminCount = await countActiveAdmins();
-            if (activeAdminCount <= 1) {
-                return res.status(400).json({ msg: "Cannot suspend the last active admin" });
-            }
-        }
-        const user = await User.findByIdAndUpdate(
-            id,
-            { isActive },
-            { new: true, runValidators: true, fields: "name email role isActive" }
-        );
-        res.json({ msg: `User is now ${user.isActive !== false ? "active" : "suspended"}`, user });
-    } catch (err) {
-        res.status(400).json({ msg: err.message });
-    }
-});
-
-/* ---------------- Root ---------------- */
-app.get("/", (req, res) => {
-    res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-/* ---------------- Upload Errors ---------------- */
-app.use((err, req, res, next) => {
-    if (err && err.code === "LIMIT_FILE_SIZE") {
-        return res.status(400).json({ msg: "Image too large. Max file size is 5MB." });
-    }
-    if (err && err.message === "Only image uploads are allowed") {
-        return res.status(400).json({ msg: err.message });
-    }
-    return next(err);
-});
-
-/* ---------------- Start Server ---------------- */
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+startServer();

@@ -1,84 +1,96 @@
-<!DOCTYPE html>
+﻿<!doctype html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Seller dashboard for creating listings, setting contact options, and searching marketplace results.">
-    <title>Dashboard - TradeCircle</title>
+    <title>Dashboard | TradeCircle</title>
     <link rel="stylesheet" href="style.css">
 </head>
-<body>
-<nav class="topbar">
-    <a class="brand" href="index.html">TradeCircle Seller Hub</a>
-    <div class="top-links">
-        <a href="index.html">Marketplace</a>
-        <a href="profile.html" class="pill-link">Profile</a>
-        <button class="logout-btn" onclick="logout()" type="button">Logout</button>
-    </div>
-</nav>
+<body data-page="dashboard">
+    <header class="navbar">
+        <div class="nav-inner">
+            <a href="index.html" class="logo">
+                <span class="logo-mark">TC</span>
+                <span>TradeCircle</span>
+            </a>
 
-<main class="container page-flow">
-    <section class="panel page-banner">
-        <p class="eyebrow">Seller Workspace</p>
-        <h3>Manage listings and respond faster</h3>
-        <p class="hero-copy">Create listings with complete contact details, then browse current marketplace supply to price competitively.</p>
-    </section>
+            <form id="navSearchForm" class="nav-search" autocomplete="off">
+                <input id="navSearchInput" type="search" placeholder="Search products...">
+                <button type="submit" class="btn btn-primary">Search</button>
+            </form>
 
-    <section class="market-layout">
-    <section class="panel">
-        <p class="eyebrow">Seller Tools</p>
-        <h3>Add Listing</h3>
-        <form id="listingForm" class="listing-form" enctype="multipart/form-data">
-            <label for="title">Listing Title</label>
-            <input type="text" id="title" placeholder="Listing Title" required>
-            <label for="price">Price (Ksh)</label>
-            <input type="text" id="price" placeholder="Price (Ksh)" required>
-            <label for="category">Category</label>
-            <select id="category"></select>
-            <label for="location">Location</label>
-            <input type="text" id="location" placeholder="e.g. Nairobi">
-            <label for="contactPlatform">Contact Platform</label>
-            <select id="contactPlatform">
-                <option value="Phone">Phone</option>
-                <option value="WhatsApp">WhatsApp</option>
-                <option value="Telegram">Telegram</option>
-                <option value="Email">Email</option>
-                <option value="SMS">SMS</option>
-                <option value="Other">Other</option>
-            </select>
-            <label for="contactLink">Contact Link</label>
-            <input type="text" id="contactLink" placeholder="Paste contact link (optional)">
-            <label for="description">Description</label>
-            <textarea id="description" placeholder="Description" required></textarea>
-            <label for="picture">Picture</label>
-            <input type="file" id="picture" accept="image/*">
-            <button type="submit">Submit Listing</button>
-        </form>
-        <p id="listingStatus" class="status" aria-live="polite"></p>
-    </section>
-
-    <section class="panel">
-        <p class="eyebrow">Browse</p>
-        <h3>Search Listings</h3>
-        <div class="search-row">
-            <input type="text" id="searchBox" placeholder="Search by title">
-            <select id="searchCategory"></select>
-            <select id="searchLocation"></select>
-            <button onclick="search()" type="button">Search</button>
+            <nav id="authLinks" class="nav-links" aria-label="Primary"></nav>
         </div>
-        <p class="tiny-meta" id="searchCount">0 results</p>
-        <div id="results"></div>
-    </section>
-    </section>
-</main>
+    </header>
 
-<footer class="site-footer">
-    <div class="container footer-inner">
-        <p>Keep your profile updated to improve buyer trust.</p>
-        <a href="profile.html">Edit Profile</a>
-    </div>
-</footer>
+    <main class="page-wrap dashboard-grid">
+        <section class="panel">
+            <div class="panel-head">
+                <h1>Your Profile</h1>
+                <p>Track your role and reputation score.</p>
+            </div>
 
-<script src="script.js"></script>
+            <div id="profileCard" class="profile-card"></div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Create Listing</h2>
+                <p>Listings are reviewed by admins before publication.</p>
+            </div>
+
+            <form id="listingForm" class="form-stack" enctype="multipart/form-data">
+                <label>
+                    Title
+                    <input type="text" name="title" required minlength="3" maxlength="120" placeholder="iPhone 13, 128GB">
+                </label>
+
+                <label>
+                    Description
+                    <textarea name="description" required minlength="10" maxlength="2500" rows="5" placeholder="Condition, accessories, and delivery details..."></textarea>
+                </label>
+
+                <label>
+                    Price
+                    <input type="number" name="price" required min="0" step="0.01" placeholder="50000">
+                </label>
+
+                <label>
+                    Location
+                    <input type="text" name="location" required maxlength="80" placeholder="Nairobi">
+                </label>
+
+                <label>
+                    Image (optional)
+                    <input type="file" name="image" accept="image/*">
+                </label>
+
+                <button type="submit" class="btn btn-primary btn-block">Submit Listing</button>
+            </form>
+        </section>
+
+        <section class="panel dashboard-wide">
+            <div class="panel-head row-between">
+                <div>
+                    <h2>My Listings</h2>
+                    <p>View listing statuses and report counts.</p>
+                </div>
+                <button id="refreshListingsBtn" type="button" class="btn btn-secondary">Refresh</button>
+            </div>
+
+            <div id="myListings" class="listing-grid"></div>
+        </section>
+
+        <section class="panel dashboard-wide">
+            <div class="panel-head">
+                <h2>Messages</h2>
+                <p>Conversation history for your selected listing.</p>
+            </div>
+            <div id="messagePanel" class="message-panel muted">Select "View Messages" on a listing to load conversation.</div>
+        </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="script.js" defer></script>
 </body>
 </html>

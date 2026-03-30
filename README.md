@@ -1,52 +1,116 @@
-# TradeCircle Website Deployment
+﻿# TradeCircle 2.0
 
-This project is a website served by Node.js + Express (not GitHub Pages static-only).
+TradeCircle is a secure digital marketplace student project inspired by platforms like Jiji.
+It includes JWT authentication, listing moderation, fraud reporting, reputation scoring,
+admin analytics, messaging, and a simulated M-Pesa payment action.
 
-## 1) Push to GitHub
+## Tech Stack
+
+- Backend: Node.js + Express
+- Database: MongoDB Atlas + Mongoose
+- Frontend: HTML, CSS, JavaScript (no framework)
+- Authentication: JWT + bcrypt password hashing
+- Uploads: Multer (local `uploads/` storage)
+
+## Project Structure
+
+- `server.js`
+- `models/`
+  - `user.js`
+  - `listing.js`
+  - `report.js`
+- `middleware/`
+  - `auth.js`
+  - `rateLimit.js`
+- `routes/`
+  - `auth.js`
+  - `listings.js`
+  - `admin.js`
+- `public/`
+  - `index.html`
+  - `login.html`
+  - `register.html`
+  - `dashboard.html`
+  - `admin.html`
+  - `style.css`
+  - `script.js`
+- `uploads/`
+
+## Features
+
+- Authentication and role-based access (`user`, `admin`)
+- User reputation system (default 100)
+- Listing creation with image uploads
+- Listing moderation workflow (`pending`, `approved`, `rejected`)
+- Public marketplace shows only approved listings
+- Search by listing title and filter by location
+- Fraud reporting system with report count tracking
+- Automatic seller reputation penalty after report threshold
+- Admin analytics (users, listings, reports, statuses)
+- Messaging on listings
+- Simulated M-Pesa payment action
+- Basic in-memory API rate limiting
+
+## 1. Install
 
 ```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/<your-username>/<your-repo>.git
-git push -u origin main
+npm install
 ```
 
-## 2) Create MongoDB Atlas Database
+## 2. Configure Environment
 
-1. Create a free cluster.
-2. Create a DB user and password.
-3. Allow your app network access (for first setup you can allow `0.0.0.0/0`).
-4. Copy the connection string and replace credentials.
+Create a `.env` file in the project root.
 
-## 3) Deploy on Render
+```env
+MONGO_URI=your_mongodb_atlas_connection_string
+JWT_SECRET=your_strong_jwt_secret
+PORT=5000
 
-1. Create a new Web Service from your GitHub repo.
-2. Use:
-   - Build Command: `npm install`
-   - Start Command: `npm start`
-3. Add environment variables:
-   - `MONGO_URI` = your Atlas URI
-   - `JWT_SECRET` = strong random secret
-   - `NODE_ENV` = `production`
-   - `CORS_ORIGIN` (optional, only if serving frontend from another domain)
-   - `CLOUDINARY_CLOUD_NAME` = your Cloudinary cloud name
-   - `CLOUDINARY_API_KEY` = your Cloudinary API key
-   - `CLOUDINARY_API_SECRET` = your Cloudinary API secret
-   - `CLOUDINARY_FOLDER` (optional) = e.g. `tradecircle`
+# Optional: auto-create admin at startup
+ADMIN_EMAIL=admin@tradecircle.com
+ADMIN_PASSWORD=StrongAdminPassword123
+ADMIN_NAME=TradeCircle Admin
 
-This repo includes `render.yaml`, so Render can auto-detect the settings.
+# Optional: allow admin registration from register page
+ADMIN_REGISTER_SECRET=your_admin_register_secret
 
-## 4) Verify
+# Optional tuning
+REPORT_THRESHOLD=3
+REPORT_PENALTY=10
+CORS_ORIGIN=http://localhost:5000
+```
 
-- Home page: `https://<your-service>.onrender.com/`
-- Health: `https://<your-service>.onrender.com/health`
+## 3. Run
+
+```bash
+node server.js
+```
+
+Open:
+
+- `http://localhost:5000` for marketplace
+- `http://localhost:5000/dashboard.html` for user dashboard
+- `http://localhost:5000/admin.html` for admin dashboard
+
+## Demo Flow
+
+1. Register a user account.
+2. Create a listing from dashboard.
+3. Login as admin and approve/reject listings.
+4. Browse approved listings on home page.
+5. Report listings to trigger fraud logic and reputation penalties.
+6. Use message and simulated payment actions on listing cards.
+
+## Security Highlights
+
+- JWT-protected routes
+- Password hashing with bcrypt
+- Server-side validation
+- Route protection by role
+- Basic rate limiting middleware
+- Image type/size checks for uploads
 
 ## Notes
 
-- `.env` is ignored by git. Keep secrets out of GitHub.
-- On Render, local `uploads/` files are not persistent. Cloudinary vars above make image URLs persistent across sleep/redeploy.
-- In `NODE_ENV=production`, this app now blocks image upload when Cloudinary vars are missing to prevent disappearing images.
-- If Git is not installed on Windows:
-  - `winget install --id Git.Git -e --source winget`
+- This project stores uploaded images in `uploads/` locally.
+- For production, use a persistent file store and robust distributed rate limiter.
