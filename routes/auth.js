@@ -13,6 +13,20 @@ function isValidPhone(phoneNumber) {
     return /^[+]?[0-9][0-9\s-]{7,22}$/.test(phoneNumber);
 }
 
+function isStrongPassword(password) {
+    const value = String(password || "");
+    if (value.length < 8) {
+        return false;
+    }
+    if (!/[a-z]/i.test(value)) {
+        return false;
+    }
+    if (!/\d/.test(value)) {
+        return false;
+    }
+    return true;
+}
+
 router.post("/register", async (req, res, next) => {
     try {
         const name = String(req.body.name || "").trim();
@@ -34,8 +48,10 @@ router.post("/register", async (req, res, next) => {
             return res.status(400).json({ message: "Please provide a valid email address." });
         }
 
-        if (password.length < 6) {
-            return res.status(400).json({ message: "Password must be at least 6 characters long." });
+        if (!isStrongPassword(password)) {
+            return res.status(400).json({
+                message: "Password must be at least 8 characters and include both letters and numbers."
+            });
         }
 
         if (phoneNumber && !isValidPhone(phoneNumber)) {
@@ -51,8 +67,30 @@ router.post("/register", async (req, res, next) => {
             return res.status(409).json({ message: "Email already exists." });
         }
 
-        const shouldCreateAdmin =
-            process.env.ADMIN_REGISTER_SECRET && adminSecret === process.env.ADMIN_REGISTER_SECRET;
+        const adminRegistrationEnabled =
+            String(process.env.ALLOW_ADMIN_REGISTRATION || "")
+                .trim()
+                .toLowerCase() === "true";
+        const adminRegisterSecret = String(process.env.ADMIN_REGISTER_SECRET || "").trim();
+
+        let role = "user";
+        if (adminSecret) {
+            if (!adminRegistrationEnabled || !adminRegisterSecret) {
+                return res.status(403).json({
+                    message: "Admin self-registration is disabled by server policy."
+                });
+            }
+            if (adminSecret !== adminRegisterSecret) {
+                return res.status(403).json({ message: "Invalid admin registration secret." });
+            }
+            role = "admin";
+        }
+
+        if (role === "admin" && password.length < 12) {
+            return res.status(400).json({
+                message: "Admin password must be at least 12 characters long."
+            });
+        }
 
         const hashedPassword = await bcrypt.hash(password, 12);
         const user = await User.create({
@@ -61,13 +99,17 @@ router.post("/register", async (req, res, next) => {
             password: hashedPassword,
             phoneNumber,
             city,
-            role: shouldCreateAdmin ? "admin" : "user"
+            role,
+            communityVerified: role !== "user"
         });
 
         const token = generateToken(user);
 
         return res.status(201).json({
-            message: "Registration successful.",
+            message:
+                role === "user"
+                    ? "Registration successful. Your account is pending community verification."
+                    : "Registration successful.",
             token,
             user
         });

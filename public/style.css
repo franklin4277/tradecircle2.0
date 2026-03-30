@@ -603,6 +603,17 @@ select:focus {
     letter-spacing: 0.04em;
 }
 
+.table-actions {
+    display: flex;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+
+.table-actions .btn {
+    padding: 0.36rem 0.58rem;
+    font-size: 0.75rem;
+}
+
 .message-panel {
     border: 1px dashed var(--border);
     border-radius: var(--radius-md);

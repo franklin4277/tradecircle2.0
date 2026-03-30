@@ -15,11 +15,11 @@ services:
         sync: false
       - key: CORS_ORIGIN
         sync: false
-      - key: CLOUDINARY_CLOUD_NAME
-        sync: false
-      - key: CLOUDINARY_API_KEY
-        sync: false
-      - key: CLOUDINARY_API_SECRET
-        sync: false
-      - key: CLOUDINARY_FOLDER
-        value: tradecircle
+      - key: UPLOADS_DIR
+        value: /var/data/uploads
+      - key: ENABLE_SIMULATED_PAYMENTS
+        value: false
+      - key: ALLOW_ADMIN_REGISTRATION
+        value: false
+      - key: ALLOW_ADMIN_PROMOTION
+        value: false

@@ -28,7 +28,7 @@ async function auth(req, res, next) {
         ensureJwtSecret();
         const payload = jwt.verify(token, JWT_SECRET);
         const user = await User.findById(payload.id).select(
-            "name email role reputationScore phoneNumber city verifiedSeller"
+            "name email role reputationScore phoneNumber city verifiedSeller communityVerified"
         );
 
         if (!user) {
@@ -43,6 +43,7 @@ async function auth(req, res, next) {
             reputationScore: user.reputationScore,
             phoneNumber: user.phoneNumber || "",
             city: user.city || "",
+            communityVerified: !!user.communityVerified,
             verifiedSeller: !!user.verifiedSeller
         };
 
@@ -62,8 +63,28 @@ function requireRole(...roles) {
     };
 }
 
+function requireCommunityVerified(req, res, next) {
+    if (!req.user) {
+        return res.status(401).json({ message: "Authentication required." });
+    }
+
+    if (["admin", "moderator"].includes(req.user.role)) {
+        return next();
+    }
+
+    if (!req.user.communityVerified) {
+        return res.status(403).json({
+            message:
+                "Your account is pending community verification. An admin/moderator must verify you first."
+        });
+    }
+
+    return next();
+}
+
 module.exports = {
     auth,
     requireRole,
+    requireCommunityVerified,
     generateToken
 };

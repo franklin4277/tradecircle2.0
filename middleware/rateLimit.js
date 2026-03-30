@@ -2,10 +2,16 @@
     const windowMs = Number(options.windowMs || 15 * 60 * 1000);
     const max = Number(options.max || 100);
     const message = options.message || "Too many requests. Please try again later.";
+    const defaultKeyGenerator = (req) => {
+        const forwardedFor = String(req.headers["x-forwarded-for"] || "")
+            .split(",")[0]
+            .trim();
+        return req.ip || forwardedFor || "unknown";
+    };
     const keyGenerator =
         typeof options.keyGenerator === "function"
             ? options.keyGenerator
-            : (req) => req.ip || req.headers["x-forwarded-for"] || "unknown";
+            : defaultKeyGenerator;
 
     const store = new Map();
 

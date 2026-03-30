@@ -169,7 +169,7 @@
         } else {
             items.push("<a class=\"btn btn-link\" href=\"dashboard.html\">Dashboard</a>");
 
-            if (state.user.role === "admin") {
+            if (state.user.role === "admin" || state.user.role === "moderator") {
                 items.push("<a class=\"btn btn-link\" href=\"admin.html\">Admin</a>");
             }
 
@@ -374,7 +374,7 @@
             return;
         }
 
-        if (user.role === "admin") {
+        if (user.role === "admin" || user.role === "moderator") {
             window.location.href = "admin.html";
             return;
         }
@@ -389,6 +389,18 @@
         }
 
         return true;
+    }
+
+    function canCurrentUserTrade() {
+        if (!state.user) {
+            return false;
+        }
+
+        if (["admin", "moderator"].includes(state.user.role)) {
+            return true;
+        }
+
+        return !!state.user.communityVerified;
     }
 
     async function initIndexPage() {
@@ -475,17 +487,21 @@
 
         listingFilterForm.addEventListener("submit", async (event) => {
             event.preventDefault();
-            await fetchAndRenderListings({
-                searchInput,
-                locationFilter,
-                categoryFilter,
-                conditionFilter,
-                minPriceFilter,
-                maxPriceFilter,
-                sortFilter,
-                listingGrid,
-                syncUrl: true
-            });
+            try {
+                await fetchAndRenderListings({
+                    searchInput,
+                    locationFilter,
+                    categoryFilter,
+                    conditionFilter,
+                    minPriceFilter,
+                    maxPriceFilter,
+                    sortFilter,
+                    listingGrid,
+                    syncUrl: true
+                });
+            } catch (error) {
+                showToast(error.message || "Unable to apply filters.", "error");
+            }
         });
 
         listingGrid.addEventListener("click", async (event) => {
@@ -512,10 +528,6 @@
 
                 if (action === "offer") {
                     await sendOffer(listingId);
-                }
-
-                if (action === "pay") {
-                    await simulatePayment(listingId);
                 }
             } catch (error) {
                 showToast(error.message || "Action failed.", "error");
@@ -582,6 +594,10 @@
         const minPrice = minPriceFilter.value.trim();
         const maxPrice = maxPriceFilter.value.trim();
         const sort = sortFilter.value.trim();
+
+        if (minPrice && maxPrice && Number(minPrice) > Number(maxPrice)) {
+            throw new Error("Minimum price cannot be greater than maximum price.");
+        }
 
         if (search) {
             params.set("search", search);
@@ -655,6 +671,7 @@
         const sellerId = listing.seller && (listing.seller._id || listing.seller);
         const isOwner = !!(state.user && sellerId && String(sellerId) === String(state.user._id));
         const sellerVerified = !!(listing.seller && listing.seller.verifiedSeller);
+        const canTrade = canCurrentUserTrade();
 
         const chips = [
             `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
@@ -676,9 +693,9 @@
             chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
         }
 
-        let actionHtml = "<p class=\"card-hint\">Login to report, message seller, or pay securely.</p>";
+        let actionHtml = "<p class=\"card-hint\">Login to report or contact seller. Payments are arranged offline.</p>";
 
-        if (state.user && !isOwner) {
+        if (state.user && !isOwner && canTrade) {
             actionHtml = `
                 <div class="card-actions">
                     <button type="button" class="btn btn-secondary" data-action="message" data-id="${escapeHtml(listing._id)}">Message</button>
@@ -687,12 +704,15 @@
                     ${
                         listing.availability === "reserved"
                             ? "<span class=\"card-hint\">Reserved by another buyer.</span>"
-                            : `<button type="button" class="btn btn-primary" data-action="pay" data-id="${escapeHtml(
-                                  listing._id
-                              )}">Pay (M-Pesa)</button>`
+                            : "<span class=\"card-hint\">Arrange payment and meetup offline with the seller.</span>"
                     }
                 </div>
             `;
+        }
+
+        if (state.user && !isOwner && !canTrade) {
+            actionHtml =
+                "<p class=\"card-hint\">Your account is pending verification. Admin/moderator approval is required before messaging, offers, or reports.</p>";
         }
 
         if (state.user && isOwner) {
@@ -734,6 +754,11 @@
         if (!ensureAuthenticated()) {
             return;
         }
+        if (!canCurrentUserTrade()) {
+            throw new Error(
+                "Your account is pending verification. Admin/moderator approval is required before reporting."
+            );
+        }
 
         const reasonInput = window.prompt(
             "Enter report reason: Scam, Fake Product, Abusive Content, Spam, or Other"
@@ -770,6 +795,11 @@
         if (!ensureAuthenticated()) {
             return;
         }
+        if (!canCurrentUserTrade()) {
+            throw new Error(
+                "Your account is pending verification. Admin/moderator approval is required before messaging."
+            );
+        }
 
         const message = window.prompt("Enter your message for the seller:", "Is this still available?");
 
@@ -798,6 +828,11 @@
         if (!ensureAuthenticated()) {
             return;
         }
+        if (!canCurrentUserTrade()) {
+            throw new Error(
+                "Your account is pending verification. Admin/moderator approval is required before offers."
+            );
+        }
 
         const offerInput = window.prompt("Enter your offer amount in KES:", "25000");
         if (offerInput === null) {
@@ -820,49 +855,6 @@
         );
 
         showToast(response.message || "Offer sent to seller.", "success");
-    }
-
-    async function simulatePayment(listingId) {
-        if (!ensureAuthenticated()) {
-            return;
-        }
-
-        const proceed = window.confirm("Simulate M-Pesa payment for this listing?");
-        if (!proceed) {
-            return;
-        }
-
-        const response = await apiRequest(
-            `/listings/${listingId}/pay`,
-            {
-                method: "POST"
-            },
-            true
-        );
-
-        const payment = response.payment || {};
-        if (payment.status === "success") {
-            showToast(
-                `Payment success: ${payment.transactionId || "Transaction created"} (${formatCurrency(
-                    payment.totalCharged || payment.amount
-                )})`,
-                "success"
-            );
-            return;
-        }
-
-        if (payment.status === "pending") {
-            showToast(
-                `Payment pending: ${payment.transactionId || "Request submitted"}.`,
-                "info"
-            );
-            return;
-        }
-
-        showToast(
-            `Payment failed: ${payment.transactionId || "Try again later"}.`,
-            "error"
-        );
     }
 
     function initLoginPage() {
@@ -921,12 +913,11 @@
             const phoneNumber = String(formData.get("phoneNumber") || "").trim();
             const city = String(formData.get("city") || "").trim();
             const password = String(formData.get("password") || "");
-            const adminSecret = String(formData.get("adminSecret") || "").trim();
 
             try {
                 const data = await apiRequest("/auth/register", {
                     method: "POST",
-                    body: { name, email, phoneNumber, city, password, adminSecret }
+                    body: { name, email, phoneNumber, city, password }
                 });
 
                 setSession(data.token, data.user);
@@ -958,6 +949,16 @@
         }
 
         renderProfileCard(profileCard, state.user);
+        if (state.user.role === "user" && !state.user.communityVerified) {
+            const controls = listingForm.querySelectorAll("input, textarea, select, button");
+            controls.forEach((control) => {
+                control.disabled = true;
+            });
+            showToast(
+                "Account pending verification. Admin/moderator must verify you before trading actions.",
+                "info"
+            );
+        }
         await loadSellerInbox(sellerInbox, inboxBadge);
 
         listingForm.addEventListener("submit", async (event) => {
@@ -1056,6 +1057,9 @@
             <div class="profile-row"><span>Name</span><strong>${escapeHtml(user.name)}</strong></div>
             <div class="profile-row"><span>Email</span><strong>${escapeHtml(user.email)}</strong></div>
             <div class="profile-row"><span>Role</span><strong>${escapeHtml(user.role)}</strong></div>
+            <div class="profile-row"><span>Community Access</span><strong>${
+                user.communityVerified ? "Verified" : "Pending Verification"
+            }</strong></div>
             <div class="profile-row"><span>Reputation</span><strong>${escapeHtml(String(user.reputationScore))}</strong></div>
             <div class="profile-row"><span>Phone</span><strong>${escapeHtml(formatPhone(user.phoneNumber))}</strong></div>
             <div class="profile-row"><span>City</span><strong>${escapeHtml(user.city || "Not set")}</strong></div>
@@ -1294,21 +1298,34 @@
             return;
         }
 
-        if (!state.user || state.user.role !== "admin") {
-            showToast("Admin access required.", "error");
+        if (!state.user || !["admin", "moderator"].includes(state.user.role)) {
+            showToast("Admin or moderator access required.", "error");
             setTimeout(() => {
                 window.location.href = "dashboard.html";
             }, 500);
             return;
         }
 
+        const isAdmin = state.user.role === "admin";
         const refreshBtn = document.getElementById("refreshAdminBtn");
         const statusFilter = document.getElementById("adminStatusFilter");
         const pendingListings = document.getElementById("pendingListings");
         const adminListings = document.getElementById("adminListings");
+        const adminUsersSection = document.getElementById("adminUsersSection");
+        const adminUsersBody = document.getElementById("adminUserRows");
+        const adminLogsSection = document.getElementById("adminLogsSection");
 
         if (!pendingListings || !adminListings) {
             return;
+        }
+
+        if (!isAdmin) {
+            if (adminUsersSection) {
+                adminUsersSection.classList.add("hidden");
+            }
+            if (adminLogsSection) {
+                adminLogsSection.classList.add("hidden");
+            }
         }
 
         if (refreshBtn) {
@@ -1356,16 +1373,56 @@
             await moderateListing(listingId, nextStatus);
         });
 
+        if (isAdmin && adminUsersBody) {
+            adminUsersBody.addEventListener("click", async (event) => {
+                const button = event.target.closest("button[data-user-action]");
+                if (!button) {
+                    return;
+                }
+
+                const userId = button.dataset.id;
+                const userAction = button.dataset.userAction;
+                const role = button.dataset.role;
+
+                if (!userId || !userAction) {
+                    return;
+                }
+
+                try {
+                    if (userAction === "verify") {
+                        await setUserVerification(userId, true);
+                    }
+                    if (userAction === "unverify") {
+                        await setUserVerification(userId, false);
+                    }
+                    if (userAction === "set-role" && role) {
+                        await setUserRole(userId, role);
+                    }
+                    await loadAdminUsers();
+                    await loadAdminLogs();
+                } catch (error) {
+                    showToast(error.message || "User update failed.", "error");
+                }
+            });
+        }
+
         await refreshAdminData();
     }
 
     async function refreshAdminData() {
-        await Promise.all([
+        const tasks = [
             loadAnalytics(),
             loadPendingListings(),
             loadAdminListings((document.getElementById("adminStatusFilter") || {}).value || ""),
             loadReports()
-        ]);
+        ];
+
+        if (state.user && state.user.role === "admin") {
+            tasks.push(loadAdminUsers());
+            tasks.push(loadAdminLogs());
+        }
+
+        await Promise.all(tasks);
     }
 
     async function loadAnalytics() {
@@ -1377,6 +1434,11 @@
         const data = await apiRequest("/admin/analytics", {}, true);
         container.innerHTML = `
             <article class="metric"><h3>Total Users</h3><p>${escapeHtml(String(data.totalUsers || 0))}</p></article>
+            <article class="metric"><h3>Moderators</h3><p>${escapeHtml(String(data.totalModerators || 0))}</p></article>
+            <article class="metric"><h3>Verified Users</h3><p>${escapeHtml(String(data.verifiedUsers || 0))}</p></article>
+            <article class="metric"><h3>Pending Verify</h3><p>${escapeHtml(
+                String(data.pendingVerification || 0)
+            )}</p></article>
             <article class="metric"><h3>Total Listings</h3><p>${escapeHtml(String(data.totalListings || 0))}</p></article>
             <article class="metric"><h3>Total Reports</h3><p>${escapeHtml(String(data.totalReports || 0))}</p></article>
             <article class="metric"><h3>Pending</h3><p>${escapeHtml(String(data.pendingListings || 0))}</p></article>
@@ -1481,6 +1543,116 @@
                         <td>${escapeHtml(report.reason || "-")}</td>
                         <td>${escapeHtml(reporter)}</td>
                         <td>${escapeHtml(seller)}</td>
+                    </tr>
+                `;
+            })
+            .join("");
+    }
+
+    async function loadAdminUsers() {
+        const tableBody = document.getElementById("adminUserRows");
+        if (!tableBody || !state.user || state.user.role !== "admin") {
+            return;
+        }
+
+        tableBody.innerHTML = "<tr><td colspan=\"7\">Loading users...</td></tr>";
+
+        const data = await apiRequest("/admin/users", {}, true);
+        const users = Array.isArray(data.users) ? data.users : [];
+
+        if (!users.length) {
+            tableBody.innerHTML = "<tr><td colspan=\"7\">No users found.</td></tr>";
+            return;
+        }
+
+        tableBody.innerHTML = users
+            .map((user) => {
+                const roleActions =
+                    user.role === "user"
+                        ? `<button class="btn btn-secondary" data-user-action="set-role" data-role="moderator" data-id="${escapeHtml(
+                              user._id
+                          )}">Make Moderator</button>`
+                        : user.role === "moderator"
+                        ? `<button class="btn btn-secondary" data-user-action="set-role" data-role="user" data-id="${escapeHtml(
+                              user._id
+                          )}">Make User</button>`
+                        : "<span class=\"chip chip-verified\">Admin</span>";
+
+                const verifyAction = user.communityVerified
+                    ? `<button class="btn btn-danger" data-user-action="unverify" data-id="${escapeHtml(
+                          user._id
+                      )}">Unverify</button>`
+                    : `<button class="btn btn-success" data-user-action="verify" data-id="${escapeHtml(
+                          user._id
+                      )}">Verify</button>`;
+
+                return `
+                    <tr>
+                        <td>${escapeHtml(user.name || "User")}</td>
+                        <td>${escapeHtml(user.email || "-")}</td>
+                        <td>${escapeHtml(user.role || "user")}</td>
+                        <td>${user.communityVerified ? "Yes" : "No"}</td>
+                        <td>${escapeHtml(String(user.reputationScore || 0))}</td>
+                        <td>${escapeHtml(formatDate(user.lastSeenAt || user.createdAt))}</td>
+                        <td class="table-actions">${verifyAction} ${roleActions}</td>
+                    </tr>
+                `;
+            })
+            .join("");
+    }
+
+    async function setUserVerification(userId, communityVerified) {
+        const response = await apiRequest(
+            `/admin/users/${userId}/verify`,
+            {
+                method: "PATCH",
+                body: {
+                    communityVerified
+                }
+            },
+            true
+        );
+        showToast(response.message || "User verification updated.", "success");
+    }
+
+    async function setUserRole(userId, role) {
+        const response = await apiRequest(
+            `/admin/users/${userId}/role`,
+            {
+                method: "PATCH",
+                body: { role }
+            },
+            true
+        );
+        showToast(response.message || "User role updated.", "success");
+    }
+
+    async function loadAdminLogs() {
+        const tableBody = document.getElementById("adminLogRows");
+        if (!tableBody || !state.user || state.user.role !== "admin") {
+            return;
+        }
+
+        tableBody.innerHTML = "<tr><td colspan=\"5\">Loading moderation logs...</td></tr>";
+
+        const data = await apiRequest("/admin/logs", {}, true);
+        const logs = Array.isArray(data.logs) ? data.logs : [];
+
+        if (!logs.length) {
+            tableBody.innerHTML = "<tr><td colspan=\"5\">No admin/moderation logs yet.</td></tr>";
+            return;
+        }
+
+        tableBody.innerHTML = logs
+            .map((log) => {
+                const actor = log.actor && log.actor.name ? log.actor.name : "Unknown";
+                return `
+                    <tr>
+                        <td>${escapeHtml(formatDate(log.createdAt))}</td>
+                        <td>${escapeHtml(actor)}</td>
+                        <td>${escapeHtml(log.action || "-")}</td>
+                        <td>${escapeHtml(log.targetType || "-")}</td>
+                        <td>${escapeHtml(log.targetId || "-")}</td>
                     </tr>
                 `;
             })

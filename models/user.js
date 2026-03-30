@@ -36,8 +36,18 @@ const userSchema = new mongoose.Schema(
         },
         role: {
             type: String,
-            enum: ["user", "admin"],
+            enum: ["user", "moderator", "admin"],
             default: "user"
+        },
+        communityVerified: {
+            type: Boolean,
+            default: false
+        },
+        verificationNotes: {
+            type: String,
+            trim: true,
+            maxlength: 200,
+            default: ""
         },
         verifiedSeller: {
             type: Boolean,

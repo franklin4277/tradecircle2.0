@@ -14,13 +14,15 @@ const listingRoutes = require("./routes/listings");
 const adminRoutes = require("./routes/admin");
 const { createRateLimiter } = require("./middleware/rateLimit");
 const { sanitizeRequest } = require("./middleware/sanitize");
+const { resolveUploadsDir } = require("./config/storage");
 
 const app = express();
 
 app.disable("x-powered-by");
+app.set("trust proxy", 1);
 
 const publicDir = path.join(__dirname, "public");
-const uploadsDir = path.join(__dirname, "uploads");
+const uploadsDir = resolveUploadsDir();
 
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
@@ -29,13 +31,39 @@ if (!fs.existsSync(uploadsDir)) {
 const corsOrigin = process.env.CORS_ORIGIN;
 const nodeEnv = String(process.env.NODE_ENV || "development").trim().toLowerCase();
 
+function normalizeOrigin(originValue) {
+    const value = String(originValue || "").trim();
+    if (!value) {
+        throw new Error("Origin is empty.");
+    }
+
+    let parsed;
+    try {
+        parsed = new URL(value);
+    } catch {
+        throw new Error(`Origin is not a valid URL: ${value}`);
+    }
+
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error(`Origin must use http/https: ${value}`);
+    }
+
+    if (parsed.pathname !== "/" || parsed.search || parsed.hash) {
+        throw new Error(
+            `Origin must not include path/query/hash: ${value}. Example: https://example.com`
+        );
+    }
+
+    return parsed.origin;
+}
+
 function parseAllowedOrigins(originConfig) {
     const fallbackOrigins = ["http://localhost:5000", "http://127.0.0.1:5000"];
     if (!originConfig) {
         if (nodeEnv === "production") {
             throw new Error("CORS_ORIGIN is required in production.");
         }
-        return fallbackOrigins;
+        return fallbackOrigins.map((origin) => normalizeOrigin(origin));
     }
 
     const origins = originConfig
@@ -47,12 +75,21 @@ function parseAllowedOrigins(originConfig) {
         throw new Error("CORS_ORIGIN is empty. Provide comma-separated allowed origins.");
     }
 
-    const invalidOrigins = origins.filter((origin) => !/^https?:\/\/[^/\s]+/i.test(origin));
+    const invalidOrigins = [];
+    const normalizedOrigins = [];
+    for (const origin of origins) {
+        try {
+            normalizedOrigins.push(normalizeOrigin(origin));
+        } catch {
+            invalidOrigins.push(origin);
+        }
+    }
+
     if (invalidOrigins.length > 0) {
         throw new Error(`Invalid CORS origin(s): ${invalidOrigins.join(", ")}`);
     }
 
-    return origins;
+    return Array.from(new Set(normalizedOrigins));
 }
 
 const allowedOrigins = parseAllowedOrigins(corsOrigin);
@@ -156,8 +193,16 @@ async function ensureAdminUser() {
 
     const existingAdmin = await User.findOne({ email: adminEmail });
     if (existingAdmin) {
+        let shouldSave = false;
         if (existingAdmin.role !== "admin") {
             existingAdmin.role = "admin";
+            shouldSave = true;
+        }
+        if (!existingAdmin.communityVerified) {
+            existingAdmin.communityVerified = true;
+            shouldSave = true;
+        }
+        if (shouldSave) {
             await existingAdmin.save();
         }
         return;
@@ -169,6 +214,7 @@ async function ensureAdminUser() {
         email: adminEmail,
         password: hashedPassword,
         role: "admin",
+        communityVerified: true,
         reputationScore: 200
     });
 }

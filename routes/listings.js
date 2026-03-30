@@ -5,12 +5,13 @@ const fs = require("fs");
 const mongoose = require("mongoose");
 const Listing = require("../models/listing");
 const Report = require("../models/report");
-const { auth } = require("../middleware/auth");
+const { auth, requireCommunityVerified } = require("../middleware/auth");
 const { adjustReputation } = require("../utils/reputation");
+const { resolveUploadsDir } = require("../config/storage");
 
 const router = express.Router();
 
-const uploadsDir = path.join(__dirname, "..", "uploads");
+const uploadsDir = resolveUploadsDir();
 if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -52,6 +53,10 @@ const VALID_CONDITIONS = ["Brand New", "Like New", "Used - Good", "Used - Fair",
 const VALID_AVAILABILITY = ["available", "reserved", "sold"];
 const REPORT_THRESHOLD = Number(process.env.REPORT_THRESHOLD || 3);
 const REPORT_PENALTY = Number(process.env.REPORT_PENALTY || 10);
+const PAYMENTS_ENABLED =
+    String(process.env.ENABLE_SIMULATED_PAYMENTS || "")
+        .trim()
+        .toLowerCase() === "true";
 
 function isValidObjectId(id) {
     return mongoose.Types.ObjectId.isValid(String(id || ""));
@@ -74,7 +79,7 @@ function parseBoolean(value, fallback = false) {
 
 function parseNumberOrNull(value) {
     const parsed = Number(value);
-    if (Number.isNaN(parsed)) {
+    if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
         return null;
     }
     return parsed;
@@ -82,6 +87,19 @@ function parseNumberOrNull(value) {
 
 function isValidPhone(phoneNumber) {
     return /^[+]?[0-9][0-9\s-]{7,22}$/.test(phoneNumber);
+}
+
+function computeRankingScore(listing, selectedCategory = "") {
+    const sellerReputation = Number(listing?.seller?.reputationScore || 100);
+    const listingReports = Number(listing?.reportsCount || 0);
+    const createdAtMs = new Date(listing?.createdAt || Date.now()).getTime();
+    const ageDays = Math.max(0, (Date.now() - createdAtMs) / (1000 * 60 * 60 * 24));
+    const freshnessScore = Math.max(0, 30 - ageDays);
+    const categoryBoost = selectedCategory && listing.category === selectedCategory ? 12 : 0;
+    const verifiedBoost = listing?.seller?.verifiedSeller ? 8 : 0;
+    const reportPenalty = listingReports * 9;
+
+    return sellerReputation * 0.65 + freshnessScore * 1.8 + categoryBoost + verifiedBoost - reportPenalty;
 }
 
 function ensureListingSeller(listing) {
@@ -143,10 +161,19 @@ router.get("/", async (req, res, next) => {
         const location = String(req.query.location || "").trim();
         const category = String(req.query.category || "").trim();
         const itemCondition = String(req.query.condition || "").trim();
-        const sort = String(req.query.sort || "newest").trim();
+        const sort = String(req.query.sort || "recommended")
+            .trim()
+            .toLowerCase();
 
         const minPrice = parseNumberOrNull(req.query.minPrice);
         const maxPrice = parseNumberOrNull(req.query.maxPrice);
+
+        if ((minPrice !== null && minPrice < 0) || (maxPrice !== null && maxPrice < 0)) {
+            return res.status(400).json({ message: "Price filters must be zero or greater." });
+        }
+        if (minPrice !== null && maxPrice !== null && minPrice > maxPrice) {
+            return res.status(400).json({ message: "Minimum price cannot be greater than maximum price." });
+        }
 
         const page = Math.max(1, Number(req.query.page) || 1);
         const limit = Math.min(60, Math.max(1, Number(req.query.limit) || 24));
@@ -179,22 +206,54 @@ router.get("/", async (req, res, next) => {
 
         if (minPrice !== null || maxPrice !== null) {
             query.price = {};
-            if (minPrice !== null && minPrice >= 0) {
+            if (minPrice !== null) {
                 query.price.$gte = minPrice;
             }
-            if (maxPrice !== null && maxPrice >= 0) {
+            if (maxPrice !== null) {
                 query.price.$lte = maxPrice;
             }
         }
 
         const sortMap = {
+            recommended: { createdAt: -1 },
             newest: { createdAt: -1 },
             oldest: { createdAt: 1 },
             price_low_high: { price: 1, createdAt: -1 },
             price_high_low: { price: -1, createdAt: -1 },
             most_viewed: { viewsCount: -1, createdAt: -1 }
         };
-        const sortBy = sortMap[sort] || sortMap.newest;
+        const sortBy = sortMap[sort] || sortMap.recommended;
+
+        if (sort === "recommended") {
+            const listings = await Listing.find(query)
+                .populate("seller", "name reputationScore verifiedSeller city")
+                .populate("owner", "name reputationScore verifiedSeller city")
+                .sort({ createdAt: -1 });
+
+            listings.forEach((listing) => {
+                if (!listing.seller && listing.owner) {
+                    listing.seller = listing.owner;
+                }
+                listing.rankingScore = Number(computeRankingScore(listing, category).toFixed(2));
+            });
+
+            listings.sort((a, b) => {
+                if (b.rankingScore !== a.rankingScore) {
+                    return b.rankingScore - a.rankingScore;
+                }
+                return new Date(b.createdAt) - new Date(a.createdAt);
+            });
+
+            const total = listings.length;
+            const paginatedListings = listings.slice(skip, skip + limit);
+
+            return res.json({
+                listings: paginatedListings,
+                total,
+                page,
+                pages: Math.max(1, Math.ceil(total / limit))
+            });
+        }
 
         const [listings, total] = await Promise.all([
             Listing.find(query)
@@ -210,16 +269,8 @@ router.get("/", async (req, res, next) => {
             if (!listing.seller && listing.owner) {
                 listing.seller = listing.owner;
             }
+            listing.rankingScore = Number(computeRankingScore(listing, category).toFixed(2));
         });
-
-        // Treat listing impressions as view events for a more realistic marketplace signal.
-        if (listings.length > 0) {
-            const ids = listings.map((listing) => listing._id);
-            await Listing.updateMany({ _id: { $in: ids } }, { $inc: { viewsCount: 1 } });
-            listings.forEach((listing) => {
-                listing.viewsCount += 1;
-            });
-        }
 
         return res.json({
             listings,
@@ -314,7 +365,7 @@ router.get("/inbox", auth, async (req, res, next) => {
     }
 });
 
-router.post("/", auth, upload.single("image"), async (req, res, next) => {
+router.post("/", auth, requireCommunityVerified, upload.single("image"), async (req, res, next) => {
     try {
         const title = String(req.body.title || "").trim();
         const description = String(req.body.description || "").trim();
@@ -411,7 +462,7 @@ router.get("/:id", async (req, res, next) => {
     }
 });
 
-router.patch("/:id/availability", auth, async (req, res, next) => {
+router.patch("/:id/availability", auth, requireCommunityVerified, async (req, res, next) => {
     try {
         const listingId = String(req.params.id || "").trim();
         const availability = String(req.body.availability || "").trim().toLowerCase();
@@ -451,7 +502,7 @@ router.patch("/:id/availability", auth, async (req, res, next) => {
     }
 });
 
-router.post("/:id/report", auth, async (req, res, next) => {
+router.post("/:id/report", auth, requireCommunityVerified, async (req, res, next) => {
     try {
         const listingId = String(req.params.id || "").trim();
         const reason = String(req.body.reason || "").trim();
@@ -512,7 +563,7 @@ router.post("/:id/report", auth, async (req, res, next) => {
         const updatedListing = await Listing.findByIdAndUpdate(
             listing._id,
             { $inc: { reportsCount: 1 } },
-            { new: true }
+            { returnDocument: "after" }
         );
 
         let sellerPenalized = false;
@@ -551,7 +602,7 @@ router.post("/:id/report", auth, async (req, res, next) => {
     }
 });
 
-router.post("/:id/messages", auth, async (req, res, next) => {
+router.post("/:id/messages", auth, requireCommunityVerified, async (req, res, next) => {
     try {
         const listingId = String(req.params.id || "").trim();
         const messageBody = String(req.body.message || "").trim();
@@ -616,7 +667,7 @@ router.post("/:id/messages", auth, async (req, res, next) => {
     }
 });
 
-router.patch("/:id/messages/read", auth, async (req, res, next) => {
+router.patch("/:id/messages/read", auth, requireCommunityVerified, async (req, res, next) => {
     try {
         const listingId = String(req.params.id || "").trim();
         if (!isValidObjectId(listingId)) {
@@ -656,7 +707,7 @@ router.patch("/:id/messages/read", auth, async (req, res, next) => {
     }
 });
 
-router.get("/:id/messages", auth, async (req, res, next) => {
+router.get("/:id/messages", auth, requireCommunityVerified, async (req, res, next) => {
     try {
         const listingId = String(req.params.id || "").trim();
         if (!isValidObjectId(listingId)) {
@@ -707,11 +758,18 @@ router.get("/:id/messages", auth, async (req, res, next) => {
     }
 });
 
-router.post("/:id/pay", auth, async (req, res, next) => {
+router.post("/:id/pay", auth, requireCommunityVerified, async (req, res, next) => {
     try {
         const listingId = String(req.params.id || "").trim();
         if (!isValidObjectId(listingId)) {
             return res.status(400).json({ message: "Invalid listing ID." });
+        }
+
+        if (!PAYMENTS_ENABLED) {
+            return res.status(410).json({
+                message:
+                    "Online payments are disabled in this phase. Please arrange payment directly with the seller."
+            });
         }
 
         const listing = await Listing.findById(listingId).select(

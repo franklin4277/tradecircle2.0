@@ -81,6 +81,52 @@
                 </table>
             </div>
         </section>
+
+        <section id="adminUsersSection" class="panel">
+            <div class="panel-head">
+                <h2>User Verification & Roles</h2>
+                <p>Verify community access and manage moderator roles.</p>
+            </div>
+
+            <div class="report-wrap">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Email</th>
+                            <th>Role</th>
+                            <th>Verified</th>
+                            <th>Reputation</th>
+                            <th>Last Seen</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminUserRows"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section id="adminLogsSection" class="panel">
+            <div class="panel-head">
+                <h2>Moderation Logs</h2>
+                <p>Audit trail for admin/moderator actions.</p>
+            </div>
+
+            <div class="report-wrap">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Actor</th>
+                            <th>Action</th>
+                            <th>Target Type</th>
+                            <th>Target ID</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminLogRows"></tbody>
+                </table>
+            </div>
+        </section>
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>

@@ -7,6 +7,7 @@ const { MongoMemoryServer } = require("mongodb-memory-server");
 process.env.NODE_ENV = "test";
 process.env.JWT_SECRET = "tradecircle-test-jwt-secret-12345";
 process.env.ADMIN_REGISTER_SECRET = "test-admin-secret";
+process.env.ALLOW_ADMIN_REGISTRATION = "true";
 process.env.CORS_ORIGIN = "http://localhost:5000";
 
 const { app } = require("../server");
@@ -49,6 +50,8 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
 
     assert.ok(sellerRegister.body.token);
     const sellerToken = sellerRegister.body.token;
+    const sellerId = sellerRegister.body.user && sellerRegister.body.user._id;
+    assert.ok(sellerId);
 
     const sellerLogin = await request(app)
         .post("/api/auth/login")
@@ -58,6 +61,41 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
         })
         .expect(200);
     assert.ok(sellerLogin.body.token);
+
+    await request(app)
+        .post("/api/listings")
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .send({
+            title: "Blocked draft",
+            description: "This should fail before community verification is approved.",
+            price: 1000,
+            location: "Nairobi",
+            category: "Electronics",
+            itemCondition: "Used - Good",
+            contactPhone: "0712345678",
+            negotiable: true,
+            deliveryAvailable: false,
+            meetupAvailable: true
+        })
+        .expect(403);
+
+    const adminRegister = await request(app)
+        .post("/api/auth/register")
+        .send({
+            name: "Admin User",
+            email: "admin@example.com",
+            password: "password1234",
+            adminSecret: "test-admin-secret"
+        })
+        .expect(201);
+    assert.equal(adminRegister.body.user.role, "admin");
+    const adminToken = adminRegister.body.token;
+
+    await request(app)
+        .patch(`/api/admin/users/${sellerId}/verify`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ communityVerified: true })
+        .expect(200);
 
     const listingCreate = await request(app)
         .post("/api/listings")
@@ -79,18 +117,6 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
     const listingId = listingCreate.body.listing && listingCreate.body.listing._id;
     assert.ok(listingId);
 
-    const adminRegister = await request(app)
-        .post("/api/auth/register")
-        .send({
-            name: "Admin User",
-            email: "admin@example.com",
-            password: "password123",
-            adminSecret: "test-admin-secret"
-        })
-        .expect(201);
-    assert.equal(adminRegister.body.user.role, "admin");
-    const adminToken = adminRegister.body.token;
-
     await request(app)
         .patch(`/api/admin/listings/${listingId}/status`)
         .set("Authorization", `Bearer ${adminToken}`)
@@ -108,6 +134,34 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
         })
         .expect(201);
     const buyerToken = buyerRegister.body.token;
+    const buyerId = buyerRegister.body.user && buyerRegister.body.user._id;
+    assert.ok(buyerId);
+
+    await request(app)
+        .patch(`/api/admin/users/${buyerId}/verify`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ communityVerified: true })
+        .expect(200);
+
+    const unverifiedBuyerRegister = await request(app)
+        .post("/api/auth/register")
+        .send({
+            name: "Buyer Pending",
+            email: "buyer-pending@example.com",
+            password: "password123",
+            phoneNumber: "0700000002",
+            city: "Kisumu"
+        })
+        .expect(201);
+    const unverifiedBuyerToken = unverifiedBuyerRegister.body.token;
+
+    await request(app)
+        .post(`/api/listings/${listingId}/messages`)
+        .set("Authorization", `Bearer ${unverifiedBuyerToken}`)
+        .send({
+            message: "Trying to message before verification."
+        })
+        .expect(403);
 
     await request(app)
         .post(`/api/listings/${listingId}/messages`)
