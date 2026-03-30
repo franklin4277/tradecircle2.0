@@ -3,8 +3,11 @@ const mongoose = require("mongoose");
 const Escrow = require("../models/escrow");
 const Listing = require("../models/listing");
 const User = require("../models/user");
+const WalletTransaction = require("../models/walletTransaction");
 const { auth, requireRole, requireCommunityVerified } = require("../middleware/auth");
 const { adjustReputation } = require("../utils/reputation");
+const { roundMoney, recordWalletTransaction } = require("../utils/wallet");
+const { createNotification, createNotifications } = require("../utils/notifications");
 
 const router = express.Router();
 
@@ -23,12 +26,27 @@ function getListingSellerId(listing) {
     return seller ? String(seller) : "";
 }
 
-function roundMoney(value) {
-    const amount = Number(value);
-    if (!Number.isFinite(amount)) {
-        return 0;
+function isServiceListing(listing) {
+    return String(listing && listing.category ? listing.category : "")
+        .trim()
+        .toLowerCase() === "services";
+}
+
+function buyerHasAcceptedOfferWithSeller(listing, buyerId) {
+    const buyer = String(buyerId || "");
+    if (!buyer) {
+        return false;
     }
-    return Number(amount.toFixed(2));
+
+    const messages = Array.isArray(listing && listing.messages) ? listing.messages : [];
+    return messages.some((message) => {
+        const senderId = String(message && message.sender ? message.sender : "");
+        return (
+            senderId === buyer &&
+            String(message.type || "") === "offer" &&
+            String(message.offerStatus || "pending") === "accepted"
+        );
+    });
 }
 
 function buildWalletSnapshot(user) {
@@ -93,6 +111,14 @@ async function holdBuyerFundsForEscrow(buyerId, totalHeld) {
     buyer.walletBalance = roundMoney(available - amountToHold);
     buyer.walletHeldBalance = roundMoney(roundMoney(buyer.walletHeldBalance) + amountToHold);
     await buyer.save();
+    await recordWalletTransaction({
+        userId: buyer._id,
+        type: "hold",
+        amount: -amountToHold,
+        balanceAfter: buyer.walletBalance,
+        referenceType: "escrow",
+        note: "Funds moved to secure hold."
+    });
 
     return {
         ok: true,
@@ -119,6 +145,14 @@ async function refundBuyerHeldFunds(buyerId, totalHeld) {
     buyer.walletHeldBalance = roundMoney(held - amountToRefund);
     buyer.walletBalance = roundMoney(roundMoney(buyer.walletBalance) + amountToRefund);
     await buyer.save();
+    await recordWalletTransaction({
+        userId: buyer._id,
+        type: "refund",
+        amount: amountToRefund,
+        balanceAfter: buyer.walletBalance,
+        referenceType: "escrow",
+        note: "Escrow refund returned to wallet."
+    });
 
     return {
         ok: true,
@@ -154,6 +188,26 @@ async function releaseHeldFundsToSeller(escrow) {
     seller.walletBalance = roundMoney(roundMoney(seller.walletBalance) + roundMoney(escrow.amount));
 
     await Promise.all([buyer.save(), seller.save()]);
+    await Promise.all([
+        recordWalletTransaction({
+            userId: buyer._id,
+            type: "release_out",
+            amount: -totalHeld,
+            balanceAfter: buyer.walletBalance,
+            referenceType: "escrow",
+            referenceId: escrow._id,
+            note: "Escrow funds released to seller."
+        }),
+        recordWalletTransaction({
+            userId: seller._id,
+            type: "release_in",
+            amount: roundMoney(escrow.amount),
+            balanceAfter: seller.walletBalance,
+            referenceType: "escrow",
+            referenceId: escrow._id,
+            note: "Escrow payout received."
+        })
+    ]);
 
     return {
         ok: true,
@@ -172,6 +226,19 @@ router.get("/wallet", auth, async (req, res, next) => {
         return res.json({
             wallet: buildWalletSnapshot(user)
         });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.get("/wallet/transactions", auth, async (req, res, next) => {
+    try {
+        const limit = Math.min(120, Math.max(1, Number(req.query.limit) || 40));
+        const transactions = await WalletTransaction.find({ user: req.user.id })
+            .sort({ createdAt: -1 })
+            .limit(limit);
+
+        return res.json({ transactions });
     } catch (error) {
         return next(error);
     }
@@ -197,6 +264,20 @@ router.post("/wallet/topup", auth, async (req, res, next) => {
 
         user.walletBalance = roundMoney(roundMoney(user.walletBalance) + amount);
         await user.save();
+        await recordWalletTransaction({
+            userId: user._id,
+            type: "topup",
+            amount,
+            balanceAfter: user.walletBalance,
+            referenceType: "manual",
+            note: "Demo wallet top-up."
+        });
+        await createNotification({
+            userId: user._id,
+            type: "wallet",
+            title: "Wallet Top-up Successful",
+            body: `KES ${amount.toFixed(2)} has been added to your wallet.`
+        });
 
         return res.status(201).json({
             message: `Wallet topped up with KES ${amount.toFixed(2)}.`,
@@ -218,7 +299,7 @@ router.post("/start", auth, requireCommunityVerified, async (req, res, next) => 
         }
 
         const listing = await Listing.findById(listingId).select(
-            "seller owner title price status availability messages"
+            "seller owner title category price status availability messages"
         );
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
@@ -237,6 +318,18 @@ router.post("/start", auth, requireCommunityVerified, async (req, res, next) => 
         }
         if (listing.availability === "sold") {
             return res.status(400).json({ message: "This listing is already sold." });
+        }
+        if (isServiceListing(listing)) {
+            return res.status(400).json({
+                message:
+                    "Service listings are for connection and scheduling. In-app escrow is not available."
+            });
+        }
+        if (!buyerHasAcceptedOfferWithSeller(listing, req.user.id)) {
+            return res.status(400).json({
+                message:
+                    "Secure hold starts only after the seller accepts your offer."
+            });
         }
 
         const existingEscrow = await Escrow.findOne({
@@ -277,6 +370,9 @@ router.post("/start", auth, requireCommunityVerified, async (req, res, next) => 
             walletHeldBalance: holdResult.buyer.walletHeldBalance
         };
 
+        const shippingWindowHours = Math.max(1, Number(process.env.ESCROW_SHIP_WINDOW_HOURS || 72));
+        const shipByAt = new Date(Date.now() + shippingWindowHours * 60 * 60 * 1000);
+
         let escrow;
         try {
             escrow = await Escrow.create({
@@ -287,6 +383,7 @@ router.post("/start", auth, requireCommunityVerified, async (req, res, next) => 
                 serviceFee,
                 totalHeld,
                 buyerNote,
+                shipByAt,
                 status: "funded",
                 events: [
                     {
@@ -313,6 +410,25 @@ router.post("/start", auth, requireCommunityVerified, async (req, res, next) => 
                 )}. Funds are held by the platform until delivery is confirmed.`
             });
             await listing.save();
+
+            await createNotifications([
+                {
+                    userId: req.user.id,
+                    type: "escrow",
+                    title: "Escrow Started",
+                    body: `Secure hold for "${listing.title}" started successfully.`,
+                    listingId: listing._id,
+                    escrowId: escrow._id
+                },
+                {
+                    userId: sellerId,
+                    type: "escrow",
+                    title: "Buyer Started Escrow",
+                    body: `A buyer started secure hold for "${listing.title}". Ship before deadline.`,
+                    listingId: listing._id,
+                    escrowId: escrow._id
+                }
+            ]);
         } catch (workflowError) {
             if (escrow && escrow._id) {
                 await Escrow.findByIdAndDelete(escrow._id).catch(() => null);
@@ -409,7 +525,7 @@ router.patch("/:id/ship", auth, requireCommunityVerified, async (req, res, next)
             return res.status(400).json({ message: "Invalid escrow ID." });
         }
 
-        const escrow = await Escrow.findById(escrowId).select("seller status events");
+        const escrow = await Escrow.findById(escrowId).select("seller buyer listing status events");
         if (!escrow) {
             return res.status(404).json({ message: "Escrow not found." });
         }
@@ -423,6 +539,25 @@ router.patch("/:id/ship", auth, requireCommunityVerified, async (req, res, next)
         escrow.status = "shipped";
         addEscrowEvent(escrow, "shipped", req.user.id, "Seller marked order as shipped/ready.");
         await escrow.save();
+
+        await createNotifications([
+            {
+                userId: escrow.buyer,
+                type: "escrow",
+                title: "Seller Marked Order Shipped",
+                body: "Your escrow item was marked as shipped. Confirm delivery once received.",
+                listingId: escrow.listing,
+                escrowId: escrow._id
+            },
+            {
+                userId: escrow.seller,
+                type: "escrow",
+                title: "Escrow Updated",
+                body: "Shipment status recorded successfully.",
+                listingId: escrow.listing,
+                escrowId: escrow._id
+            }
+        ]);
 
         return res.json({
             message: "Escrow updated to shipped.",
@@ -475,6 +610,25 @@ router.patch("/:id/confirm", auth, requireCommunityVerified, async (req, res, ne
             await listing.save();
         }
 
+        await createNotifications([
+            {
+                userId: escrow.buyer,
+                type: "escrow",
+                title: "Escrow Completed",
+                body: "You confirmed delivery. Funds were released.",
+                listingId: escrow.listing,
+                escrowId: escrow._id
+            },
+            {
+                userId: escrow.seller,
+                type: "wallet",
+                title: "Escrow Payout Received",
+                body: "Delivery was confirmed and funds were released to your wallet.",
+                listingId: escrow.listing,
+                escrowId: escrow._id
+            }
+        ]);
+
         return res.json({
             message: "Delivery confirmed. Funds released to seller.",
             escrow,
@@ -517,6 +671,24 @@ router.patch("/:id/cancel", auth, requireCommunityVerified, async (req, res, nex
         await escrow.save();
 
         await restoreListingAvailabilityIfNeeded(escrow.listing);
+        await createNotifications([
+            {
+                userId: escrow.buyer,
+                type: "wallet",
+                title: "Escrow Cancelled",
+                body: "Your escrow was cancelled and funds were refunded.",
+                listingId: escrow.listing,
+                escrowId: escrow._id
+            },
+            {
+                userId: escrow.seller,
+                type: "escrow",
+                title: "Escrow Cancelled by Buyer",
+                body: "Buyer cancelled the escrow before shipment.",
+                listingId: escrow.listing,
+                escrowId: escrow._id
+            }
+        ]);
 
         return res.json({
             message: "Escrow cancelled and buyer refunded.",
@@ -566,6 +738,23 @@ router.patch("/:id/dispute", auth, requireCommunityVerified, async (req, res, ne
         escrow.disputeOpenedBy = req.user.id;
         addEscrowEvent(escrow, "disputed", req.user.id, reason);
         await escrow.save();
+
+        await createNotifications([
+            {
+                userId: escrow.buyer,
+                type: "escrow",
+                title: "Escrow Dispute Opened",
+                body: "A dispute is now open for this escrow.",
+                escrowId: escrow._id
+            },
+            {
+                userId: escrow.seller,
+                type: "escrow",
+                title: "Escrow Dispute Opened",
+                body: "A dispute is now open for this escrow.",
+                escrowId: escrow._id
+            }
+        ]);
 
         return res.json({
             message: "Dispute opened. Admin/moderator review is now required.",
@@ -649,6 +838,31 @@ router.patch("/:id/resolve", auth, requireRole("admin", "moderator"), async (req
         }
 
         await escrow.save();
+
+        await createNotifications([
+            {
+                userId: escrow.buyer,
+                type: "escrow",
+                title: "Escrow Dispute Resolved",
+                body:
+                    resolution === "release_to_seller"
+                        ? "Dispute resolved. Funds released to seller."
+                        : "Dispute resolved. Funds refunded to your wallet.",
+                listingId: escrow.listing,
+                escrowId: escrow._id
+            },
+            {
+                userId: escrow.seller,
+                type: "escrow",
+                title: "Escrow Dispute Resolved",
+                body:
+                    resolution === "release_to_seller"
+                        ? "Dispute resolved. Funds released to your wallet."
+                        : "Dispute resolved. Buyer refunded.",
+                listingId: escrow.listing,
+                escrowId: escrow._id
+            }
+        ]);
 
         return res.json({
             message:

@@ -7,15 +7,18 @@ const fs = require("fs");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 const helmet = require("helmet");
+const cookieParser = require("cookie-parser");
 
 const User = require("./models/user");
 const authRoutes = require("./routes/auth");
 const listingRoutes = require("./routes/listings");
 const escrowRoutes = require("./routes/escrow");
 const adminRoutes = require("./routes/admin");
+const notificationRoutes = require("./routes/notifications");
 const { createRateLimiter } = require("./middleware/rateLimit");
 const { sanitizeRequest } = require("./middleware/sanitize");
 const { resolveUploadsDir } = require("./config/storage");
+const { startEscrowSlaWorker } = require("./services/escrowSla");
 
 const app = express();
 
@@ -116,6 +119,7 @@ app.use(
         crossOriginResourcePolicy: { policy: "cross-origin" }
     })
 );
+app.use(cookieParser());
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(sanitizeRequest);
@@ -153,6 +157,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/listings", listingRoutes);
 app.use("/api/escrow", escrowRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 app.get("/", (_, res) => {
     return res.sendFile(path.join(publicDir, "index.html"));
@@ -243,6 +248,7 @@ async function startServer() {
     try {
         await mongoose.connect(mongoUri);
         await ensureAdminUser();
+        startEscrowSlaWorker();
 
         const port = Number(process.env.PORT || 5000);
         const server = app.listen(port, () => {

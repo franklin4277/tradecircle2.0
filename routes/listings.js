@@ -6,8 +6,11 @@ const mongoose = require("mongoose");
 const Listing = require("../models/listing");
 const Report = require("../models/report");
 const Escrow = require("../models/escrow");
+const User = require("../models/user");
 const { auth, requireCommunityVerified } = require("../middleware/auth");
 const { adjustReputation } = require("../utils/reputation");
+const { computeListingRiskScore } = require("../utils/fraud");
+const { createNotification } = require("../utils/notifications");
 const { resolveUploadsDir } = require("../config/storage");
 
 const router = express.Router();
@@ -79,6 +82,14 @@ function parseBoolean(value, fallback = false) {
     return fallback;
 }
 
+function normalizeServiceRateType(value) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (["fixed", "hourly", "daily", "negotiable"].includes(raw)) {
+        return raw;
+    }
+    return "fixed";
+}
+
 function parseNumberOrNull(value) {
     const parsed = Number(value);
     if (Number.isNaN(parsed) || !Number.isFinite(parsed)) {
@@ -126,6 +137,39 @@ function normalizeMessageSenderId(message) {
     return String(message.sender._id || message.sender);
 }
 
+function isServiceListing(listing) {
+    return String(listing && listing.category ? listing.category : "")
+        .trim()
+        .toLowerCase() === "services";
+}
+
+function buyerHasNegotiatedWithSeller(listing, buyerId) {
+    const buyer = String(buyerId || "");
+    if (!buyer) {
+        return false;
+    }
+
+    const messages = Array.isArray(listing && listing.messages) ? listing.messages : [];
+    return messages.some((message) => normalizeMessageSenderId(message) === buyer);
+}
+
+function buyerHasAcceptedOfferWithSeller(listing, buyerId) {
+    const buyer = String(buyerId || "");
+    if (!buyer) {
+        return false;
+    }
+
+    const messages = Array.isArray(listing && listing.messages) ? listing.messages : [];
+    return messages.some((message) => {
+        const senderId = normalizeMessageSenderId(message);
+        return (
+            senderId === buyer &&
+            String(message.type || "") === "offer" &&
+            String(message.offerStatus || "pending") === "accepted"
+        );
+    });
+}
+
 function isStaffUser(user) {
     const role = String(user && user.role ? user.role : "").toLowerCase();
     return role === "admin" || role === "moderator";
@@ -150,6 +194,26 @@ async function removeListingImageIfExists(imagePath) {
             throw error;
         }
     }
+}
+
+async function applyListingRiskSignals(listing) {
+    const sellerId = getListingSellerId(listing);
+    if (!sellerId) {
+        return null;
+    }
+
+    const seller = await User.findById(sellerId).select("verifiedSeller createdAt");
+    if (!seller) {
+        return null;
+    }
+
+    const risk = computeListingRiskScore({ listing, seller });
+    listing.riskScore = risk.score;
+    listing.riskLevel = risk.riskLevel;
+    listing.riskFlags = risk.flags;
+    listing.flaggedForFraud = risk.riskLevel === "high";
+
+    return risk;
 }
 
 router.get("/meta", async (req, res, next) => {
@@ -405,6 +469,13 @@ router.post("/", auth, requireCommunityVerified, upload.single("image"), async (
         const negotiable = parseBoolean(req.body.negotiable, false);
         const deliveryAvailable = parseBoolean(req.body.deliveryAvailable, false);
         const meetupAvailable = parseBoolean(req.body.meetupAvailable, false);
+        const serviceRateType = normalizeServiceRateType(req.body.serviceRateType);
+        const serviceRemoteAvailable = parseBoolean(req.body.serviceRemoteAvailable, false);
+        const serviceResponseTimeHours = Math.max(
+            1,
+            Math.min(168, Number(req.body.serviceResponseTimeHours) || 24)
+        );
+        const isService = String(category).toLowerCase() === "services";
 
         if (!title || !description || !location || Number.isNaN(price) || !contactPhone) {
             return res.status(400).json({
@@ -416,7 +487,7 @@ router.post("/", auth, requireCommunityVerified, upload.single("image"), async (
             return res.status(400).json({ message: "Invalid listing category." });
         }
 
-        if (!VALID_CONDITIONS.includes(itemCondition)) {
+        if (!isService && !VALID_CONDITIONS.includes(itemCondition)) {
             return res.status(400).json({ message: "Invalid item condition." });
         }
 
@@ -444,14 +515,19 @@ router.post("/", auth, requireCommunityVerified, upload.single("image"), async (
             price,
             location,
             category,
-            itemCondition,
+            itemCondition: isService ? "Used - Good" : itemCondition,
             contactPhone,
             negotiable,
-            deliveryAvailable,
-            meetupAvailable,
+            deliveryAvailable: isService ? false : deliveryAvailable,
+            meetupAvailable: isService ? true : meetupAvailable,
+            serviceRateType: isService ? serviceRateType : "fixed",
+            serviceRemoteAvailable: isService ? serviceRemoteAvailable : false,
+            serviceResponseTimeHours: isService ? serviceResponseTimeHours : 24,
             image: req.file ? `/uploads/${req.file.filename}` : "",
             status: "pending"
         });
+        await applyListingRiskSignals(listing);
+        await listing.save();
 
         return res.status(201).json({
             message: "Listing submitted for moderation.",
@@ -665,12 +741,23 @@ router.post("/:id/report", auth, requireCommunityVerified, async (req, res, next
             movedToPendingReview = true;
         }
 
+        if (updatedListing) {
+            const risk = await applyListingRiskSignals(updatedListing);
+            if (risk && risk.riskLevel === "high" && updatedListing.status === "approved") {
+                updatedListing.status = "pending";
+                movedToPendingReview = true;
+            }
+            await updatedListing.save();
+        }
+
         return res.status(201).json({
             message: "Report submitted successfully.",
             reportsCount: updatedListing ? updatedListing.reportsCount : listing.reportsCount + 1,
             sellerPenalized,
             movedToPendingReview,
-            listingStatus: updatedListing ? updatedListing.status : listing.status
+            listingStatus: updatedListing ? updatedListing.status : listing.status,
+            riskScore: updatedListing ? updatedListing.riskScore : null,
+            riskLevel: updatedListing ? updatedListing.riskLevel : null
         });
     } catch (error) {
         return next(error);
@@ -721,7 +808,9 @@ router.post("/:id/messages", auth, requireCommunityVerified, async (req, res, ne
             return res.status(400).json({ message: "This listing has already been sold." });
         }
 
+        const messageId = new mongoose.Types.ObjectId().toString();
         listing.messages.push({
+            messageId,
             sender: req.user.id,
             senderName: req.user.name || "",
             senderEmail: req.user.email || "",
@@ -730,12 +819,119 @@ router.post("/:id/messages", auth, requireCommunityVerified, async (req, res, ne
             readBySeller: sellerId === req.user.id,
             type: hasOffer ? "offer" : "message",
             body: textToSend,
-            offerAmount: hasOffer ? Number(offerAmountRaw.toFixed(2)) : null
+            offerAmount: hasOffer ? Number(offerAmountRaw.toFixed(2)) : null,
+            offerStatus: hasOffer ? "pending" : "pending"
         });
         await listing.save();
 
+        if (sellerId !== req.user.id) {
+            await createNotification({
+                userId: sellerId,
+                type: hasOffer ? "offer" : "message",
+                title: hasOffer ? "New Offer Received" : "New Buyer Message",
+                body: hasOffer
+                    ? `${req.user.name || "A buyer"} offered ${offerAmountRaw.toFixed(
+                          2
+                      )} on "${listing.title}".`
+                    : `${req.user.name || "A buyer"} sent you a message on "${listing.title}".`,
+                listingId: listing._id,
+                messageId
+            });
+        }
+
         return res.status(201).json({
             message: hasOffer ? "Offer sent to seller." : "Message sent."
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.patch("/:id/offers/:messageId/decision", auth, requireCommunityVerified, async (req, res, next) => {
+    try {
+        const listingId = String(req.params.id || "").trim();
+        const messageId = String(req.params.messageId || "").trim();
+        const decision = String(req.body.decision || "").trim().toLowerCase();
+
+        if (!isValidObjectId(listingId)) {
+            return res.status(400).json({ message: "Invalid listing ID." });
+        }
+        if (!messageId) {
+            return res.status(400).json({ message: "Offer message ID is required." });
+        }
+        if (!["accepted", "rejected"].includes(decision)) {
+            return res.status(400).json({ message: "Decision must be accepted or rejected." });
+        }
+
+        const listing = await Listing.findById(listingId).select(
+            "title seller owner availability messages"
+        );
+        if (!listing) {
+            return res.status(404).json({ message: "Listing not found." });
+        }
+        ensureListingSeller(listing);
+
+        const sellerId = getListingSellerId(listing);
+        if (sellerId !== req.user.id) {
+            return res.status(403).json({ message: "Only the seller can decide on offers." });
+        }
+
+        const targetOffer = listing.messages.find(
+            (message) =>
+                String(message.messageId || "") === messageId && String(message.type || "") === "offer"
+        );
+        if (!targetOffer) {
+            return res.status(404).json({ message: "Offer not found for this listing." });
+        }
+
+        if (targetOffer.offerStatus !== "pending") {
+            return res.status(400).json({ message: "This offer already has a final decision." });
+        }
+
+        targetOffer.offerStatus = decision;
+        targetOffer.offerDecisionBy = req.user.id;
+        targetOffer.offerDecisionAt = new Date();
+        targetOffer.readBySeller = true;
+
+        if (decision === "accepted") {
+            listing.availability = "reserved";
+            listing.messages.forEach((message) => {
+                if (
+                    message !== targetOffer &&
+                    String(message.type || "") === "offer" &&
+                    String(message.offerStatus || "pending") === "pending"
+                ) {
+                    message.offerStatus = "rejected";
+                    message.offerDecisionBy = req.user.id;
+                    message.offerDecisionAt = new Date();
+                }
+            });
+        }
+
+        await listing.save();
+
+        const buyerId = normalizeMessageSenderId(targetOffer);
+        if (buyerId) {
+            await createNotification({
+                userId: buyerId,
+                type: "offer",
+                title:
+                    decision === "accepted" ? "Offer Accepted" : "Offer Update",
+                body:
+                    decision === "accepted"
+                        ? `Your offer on "${listing.title}" was accepted. You can now start secure payment.`
+                        : `Your offer on "${listing.title}" was not accepted.`,
+                listingId: listing._id,
+                messageId
+            });
+        }
+
+        return res.json({
+            message:
+                decision === "accepted"
+                    ? "Offer accepted. Listing is now reserved."
+                    : "Offer rejected.",
+            decision
         });
     } catch (error) {
         return next(error);
@@ -827,7 +1023,10 @@ router.get("/:id/messages", auth, requireCommunityVerified, async (req, res, nex
                   (msg) => normalizeMessageSenderId(msg) === req.user.id
               );
 
-        return res.json({ messages });
+        return res.json({
+            messages,
+            isSeller
+        });
     } catch (error) {
         return next(error);
     }
@@ -848,7 +1047,7 @@ router.post("/:id/pay", auth, requireCommunityVerified, async (req, res, next) =
         }
 
         const listing = await Listing.findById(listingId).select(
-            "seller owner price status title availability deliveryAvailable"
+            "seller owner category price status title availability deliveryAvailable messages"
         );
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
@@ -873,6 +1072,20 @@ router.post("/:id/pay", auth, requireCommunityVerified, async (req, res, next) =
 
         if (sellerId === req.user.id) {
             return res.status(400).json({ message: "You cannot pay for your own listing." });
+        }
+
+        if (isServiceListing(listing)) {
+            return res.status(400).json({
+                message:
+                    "Service listings are connection-only on TradeCircle. In-app payment is not used for this category."
+            });
+        }
+
+        if (!buyerHasAcceptedOfferWithSeller(listing, req.user.id)) {
+            return res.status(400).json({
+                message:
+                    "In-app payment starts only after the seller accepts your offer."
+            });
         }
 
         const transactionId = `MPESA-${Date.now()}-${Math.floor(Math.random() * 1000)}`;

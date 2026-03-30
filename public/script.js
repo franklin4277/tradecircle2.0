@@ -18,7 +18,8 @@
     const state = {
         user: null,
         toastTimer: null,
-        meta: null
+        meta: null,
+        refreshInFlight: null
     };
 
     document.addEventListener("DOMContentLoaded", async () => {
@@ -103,9 +104,14 @@
     }
 
     function setSession(token, user) {
-        localStorage.setItem(TOKEN_KEY, token);
-        localStorage.setItem(USER_CACHE_KEY, JSON.stringify(user));
-        state.user = user;
+        if (token) {
+            localStorage.setItem(TOKEN_KEY, token);
+        }
+
+        if (user) {
+            localStorage.setItem(USER_CACHE_KEY, JSON.stringify(user));
+            state.user = user;
+        }
     }
 
     function clearSession() {
@@ -123,19 +129,13 @@
     }
 
     async function hydrateCurrentUser() {
-        const token = getToken();
-
-        if (!token) {
-            state.user = getCachedUser();
-            return;
-        }
-
         try {
             const data = await apiRequest("/auth/me", {}, true);
             state.user = data.user;
             localStorage.setItem(USER_CACHE_KEY, JSON.stringify(data.user));
         } catch {
-            clearSession();
+            state.user = null;
+            localStorage.removeItem(USER_CACHE_KEY);
         }
     }
 
@@ -217,11 +217,22 @@
         }
 
         authLinks.innerHTML = items.join("");
-        setupMobileMenu(navSearchForm, authLinks);
+        setupNavigationMenu(navSearchForm, authLinks);
 
         const logoutBtn = document.getElementById("logoutBtn");
         if (logoutBtn) {
-            logoutBtn.addEventListener("click", () => {
+            logoutBtn.addEventListener("click", async () => {
+                try {
+                    await apiRequest(
+                        "/auth/logout",
+                        {
+                            method: "POST"
+                        },
+                        false
+                    );
+                } catch {
+                    // Continue local logout even if network call fails.
+                }
                 clearSession();
                 showToast("You have been logged out.", "success");
                 setTimeout(() => {
@@ -231,7 +242,7 @@
         }
     }
 
-    function setupMobileMenu(navSearchForm, authLinks) {
+    function setupNavigationMenu(navSearchForm, authLinks) {
         if (!authLinks) {
             return;
         }
@@ -252,46 +263,81 @@
             navInner.insertBefore(toggle, authLinks);
         }
 
-        const setMenuState = (isOpen) => {
-            navInner.classList.toggle("menu-open", isOpen);
-            toggle.classList.toggle("is-open", isOpen);
-            toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
-            toggle.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
+        const isMobileViewport = () => window.innerWidth <= 960;
+
+        const syncToggleState = () => {
+            const mobileOpen = navInner.classList.contains("menu-open");
+            const desktopCollapsed = navInner.classList.contains("menu-collapsed");
+            const isMobile = isMobileViewport();
+            const expanded = isMobile ? mobileOpen : !desktopCollapsed;
+            const activeIcon = isMobile ? mobileOpen : desktopCollapsed;
+
+            toggle.classList.toggle("is-open", activeIcon);
+            toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+            toggle.setAttribute(
+                "aria-label",
+                isMobile
+                    ? expanded
+                        ? "Close menu"
+                        : "Open menu"
+                    : expanded
+                    ? "Collapse desktop menu"
+                    : "Expand desktop menu"
+            );
         };
 
-        setMenuState(false);
+        navInner.classList.remove("menu-open", "menu-collapsed");
+        syncToggleState();
 
         toggle.addEventListener("click", () => {
-            setMenuState(!navInner.classList.contains("menu-open"));
+            if (isMobileViewport()) {
+                navInner.classList.toggle("menu-open");
+                navInner.classList.remove("menu-collapsed");
+            } else {
+                navInner.classList.toggle("menu-collapsed");
+                navInner.classList.remove("menu-open");
+            }
+            syncToggleState();
         });
 
-        const closeMenu = () => setMenuState(false);
+        const closeMobileMenu = () => {
+            if (navInner.classList.contains("menu-open")) {
+                navInner.classList.remove("menu-open");
+                syncToggleState();
+            }
+        };
 
         authLinks.addEventListener("click", (event) => {
-            if (event.target.closest("a,button")) {
-                closeMenu();
+            if (isMobileViewport() && event.target.closest("a,button")) {
+                closeMobileMenu();
             }
         });
 
         if (navSearchForm) {
-            navSearchForm.addEventListener("submit", closeMenu);
+            navSearchForm.addEventListener("submit", () => {
+                closeMobileMenu();
+            });
         }
 
         document.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") {
-                closeMenu();
+            if (event.key === "Escape" && isMobileViewport()) {
+                closeMobileMenu();
             }
         });
 
         window.addEventListener("resize", () => {
-            if (window.innerWidth > 960) {
-                closeMenu();
+            if (isMobileViewport()) {
+                navInner.classList.remove("menu-collapsed");
+                navInner.classList.remove("menu-open");
+            } else {
+                navInner.classList.remove("menu-open");
             }
+            syncToggleState();
         });
 
         document.addEventListener("click", (event) => {
-            if (!navInner.contains(event.target)) {
-                closeMenu();
+            if (isMobileViewport() && !navInner.contains(event.target)) {
+                closeMobileMenu();
             }
         });
     }
@@ -319,18 +365,59 @@
         }, 3200);
     }
 
+    async function refreshAccessToken() {
+        if (state.refreshInFlight) {
+            return state.refreshInFlight;
+        }
+
+        state.refreshInFlight = (async () => {
+            try {
+                const response = await fetch(`${API_BASE}/auth/refresh`, {
+                    method: "POST",
+                    credentials: "include"
+                });
+                if (!response.ok) {
+                    return false;
+                }
+
+                const contentType = response.headers.get("content-type") || "";
+                if (!contentType.includes("application/json")) {
+                    return false;
+                }
+
+                const payload = await response.json();
+                if (payload && payload.token) {
+                    localStorage.setItem(TOKEN_KEY, payload.token);
+                }
+                if (payload && payload.user) {
+                    localStorage.setItem(USER_CACHE_KEY, JSON.stringify(payload.user));
+                    state.user = payload.user;
+                }
+                return true;
+            } catch {
+                return false;
+            }
+        })();
+
+        try {
+            return await state.refreshInFlight;
+        } finally {
+            state.refreshInFlight = null;
+        }
+    }
+
     async function apiRequest(endpoint, options = {}, requiresAuth = false) {
         const config = {
             method: options.method || "GET",
-            headers: {}
+            headers: {},
+            credentials: "include"
         };
 
         if (requiresAuth) {
             const token = getToken();
-            if (!token) {
-                throw new Error("Please login to continue.");
+            if (token) {
+                config.headers.Authorization = `Bearer ${token}`;
             }
-            config.headers.Authorization = `Bearer ${token}`;
         }
 
         if (options.body instanceof FormData) {
@@ -340,7 +427,24 @@
             config.body = JSON.stringify(options.body);
         }
 
-        const response = await fetch(`${API_BASE}${endpoint}`, config);
+        let response = await fetch(`${API_BASE}${endpoint}`, config);
+        if (
+            response.status === 401 &&
+            requiresAuth &&
+            !endpoint.startsWith("/auth/refresh") &&
+            !endpoint.startsWith("/auth/login")
+        ) {
+            const refreshed = await refreshAccessToken();
+            if (refreshed) {
+                const nextToken = getToken();
+                if (nextToken) {
+                    config.headers.Authorization = `Bearer ${nextToken}`;
+                } else {
+                    delete config.headers.Authorization;
+                }
+                response = await fetch(`${API_BASE}${endpoint}`, config);
+            }
+        }
         const contentType = response.headers.get("content-type") || "";
 
         let payload = {};
@@ -503,7 +607,7 @@
     }
 
     function ensureAuthenticated() {
-        if (!state.user || !getToken()) {
+        if (!state.user) {
             window.location.href = "login.html";
             return false;
         }
@@ -796,11 +900,18 @@
         const isOwner = !!(state.user && sellerId && String(sellerId) === String(state.user._id));
         const sellerVerified = !!(listing.seller && listing.seller.verifiedSeller);
         const canTrade = canCurrentUserTrade();
+        const isServiceListing =
+            String(listing.category || "")
+                .trim()
+                .toLowerCase() === "services";
 
         const chips = [
             `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
             `<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`
         ];
+        if (String(listing.listingType || "").toLowerCase() === "service") {
+            chips.push("<span class=\"chip\">Service</span>");
+        }
         if (listing.negotiable) {
             chips.push("<span class=\"chip\">Negotiable</span>");
         }
@@ -813,26 +924,39 @@
         if (listing.availability === "sold") {
             chips.push("<span class=\"chip chip-sold\">Sold</span>");
         }
+        if (String(listing.riskLevel || "").toLowerCase() === "high") {
+            chips.push("<span class=\"chip chip-warning\">High Risk</span>");
+        }
         if (sellerVerified) {
             chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
         }
 
-        let actionHtml = "<p class=\"card-hint\">Login to message seller or use TradeCircle Secure Hold.</p>";
+        let actionHtml = isServiceListing
+            ? "<p class=\"card-hint\">Login to contact the service provider. Service listings are connection-only.</p>"
+            : "<p class=\"card-hint\">Login to message seller or use TradeCircle Secure Hold.</p>";
 
         if (state.user && !isOwner && canTrade) {
+            const paymentAction =
+                listing.availability === "reserved"
+                    ? "<span class=\"card-hint\">Reserved by another buyer.</span>"
+                    : isServiceListing
+                    ? "<span class=\"card-hint\">Service listing: connect directly with the seller. In-app payment is not required.</span>"
+                    : `<button type="button" class="btn btn-primary" data-action="start-escrow" data-id="${escapeHtml(
+                          listing._id
+                      )}">Secure Hold</button>`;
+
             actionHtml = `
                 <div class="card-actions">
                     <button type="button" class="btn btn-secondary" data-action="message" data-id="${escapeHtml(listing._id)}">Message</button>
                     <button type="button" class="btn btn-secondary" data-action="offer" data-id="${escapeHtml(listing._id)}">Make Offer</button>
                     <button type="button" class="btn btn-secondary" data-action="report" data-id="${escapeHtml(listing._id)}">Report</button>
-                    ${
-                        listing.availability === "reserved"
-                            ? "<span class=\"card-hint\">Reserved by another buyer.</span>"
-                            : `<button type="button" class="btn btn-primary" data-action="start-escrow" data-id="${escapeHtml(
-                                  listing._id
-                              )}">Secure Hold</button>`
-                    }
+                    ${paymentAction}
                 </div>
+                ${
+                    isServiceListing
+                        ? "<p class=\"card-hint\">TradeCircle helps you connect with service providers and agree terms directly.</p>"
+                        : "<p class=\"card-hint\">Use Secure Hold only after negotiating with the seller via message or offer.</p>"
+                }
             `;
         }
 
@@ -983,6 +1107,25 @@
         showToast(response.message || "Offer sent to seller.", "success");
     }
 
+    async function decideOffer(listingId, messageId, decision) {
+        const decisionLabel = decision === "accepted" ? "accept" : "reject";
+        const proceed = window.confirm(`Are you sure you want to ${decisionLabel} this offer?`);
+        if (!proceed) {
+            return;
+        }
+
+        const response = await apiRequest(
+            `/listings/${listingId}/offers/${messageId}/decision`,
+            {
+                method: "PATCH",
+                body: { decision }
+            },
+            true
+        );
+
+        showToast(response.message || "Offer updated.", "success");
+    }
+
     async function startEscrow(listingId) {
         if (!ensureAuthenticated()) {
             return;
@@ -994,14 +1137,14 @@
         }
 
         const amountInput = window.prompt(
-            "Enter amount to hold in escrow (leave blank to use listing price):",
+            "After negotiation, enter amount to hold in escrow (leave blank to use listing price):",
             ""
         );
         if (amountInput === null) {
             return;
         }
 
-        const note = window.prompt("Optional note for seller (escrow details):", "") || "";
+        const note = window.prompt("Optional note for seller (agreed terms):", "") || "";
         const payload = {
             listingId,
             note
@@ -1123,13 +1266,60 @@
         const sellerInbox = document.getElementById("sellerInbox");
         const inboxBadge = document.getElementById("inboxBadge");
         const escrowDeals = document.getElementById("escrowDeals");
+        const walletTransactions = document.getElementById("walletTransactions");
         const walletTopupForm = document.getElementById("walletTopupForm");
+        const notificationList = document.getElementById("notificationList");
+        const notificationBadge = document.getElementById("notificationBadge");
+        const markAllNotificationsBtn = document.getElementById("markAllNotificationsBtn");
+        const categoryInput = listingForm.querySelector("select[name='category']");
+        const conditionInput = document.getElementById("itemConditionInput");
+        const serviceFields = document.getElementById("serviceFields");
+        const serviceRemoteField = document.getElementById("serviceRemoteField");
+        const deliveryField = listingForm.querySelector("input[name='deliveryAvailable']")
+            ? listingForm.querySelector("input[name='deliveryAvailable']").closest("label")
+            : null;
+        const meetupField = listingForm.querySelector("input[name='meetupAvailable']")
+            ? listingForm.querySelector("input[name='meetupAvailable']").closest("label")
+            : null;
+        const conditionField = conditionInput ? conditionInput.closest("label") : null;
 
         if (!profileCard || !listingForm || !myListings) {
             return;
         }
 
         renderProfileCard(profileCard, state.user);
+
+        const syncListingTypeFields = () => {
+            const isService =
+                String((categoryInput && categoryInput.value) || "")
+                    .trim()
+                    .toLowerCase() === "services";
+
+            if (serviceFields) {
+                serviceFields.classList.toggle("hidden", !isService);
+            }
+            if (serviceRemoteField) {
+                serviceRemoteField.classList.toggle("hidden", !isService);
+            }
+            if (conditionField) {
+                conditionField.classList.toggle("hidden", isService);
+            }
+            if (deliveryField) {
+                deliveryField.classList.toggle("hidden", isService);
+            }
+            if (meetupField) {
+                meetupField.classList.toggle("hidden", false);
+            }
+            if (conditionInput) {
+                conditionInput.required = !isService;
+            }
+        };
+
+        if (categoryInput) {
+            categoryInput.addEventListener("change", syncListingTypeFields);
+            syncListingTypeFields();
+        }
+
         if (state.user.role === "user" && !state.user.communityVerified) {
             const controls = listingForm.querySelectorAll("input, textarea, select, button");
             controls.forEach((control) => {
@@ -1142,6 +1332,8 @@
         }
         await loadSellerInbox(sellerInbox, inboxBadge);
         await loadEscrowDeals(escrowDeals);
+        await loadWalletTransactions(walletTransactions);
+        await loadNotifications(notificationList, notificationBadge);
 
         if (walletTopupForm) {
             walletTopupForm.addEventListener("submit", async (event) => {
@@ -1169,6 +1361,7 @@
                     );
                     applyWalletToCurrentUser(response.wallet);
                     renderProfileCard(profileCard, state.user);
+                    await loadWalletTransactions(walletTransactions);
                     walletTopupForm.reset();
                     showToast(response.message || "Wallet topped up.", "success");
                 } catch (error) {
@@ -1255,6 +1448,8 @@
                 await loadMyListings(myListings);
                 await loadSellerInbox(sellerInbox, inboxBadge);
                 await loadEscrowDeals(escrowDeals);
+                await loadWalletTransactions(walletTransactions);
+                await loadNotifications(notificationList, notificationBadge);
                 showToast("Listings refreshed.", "success");
             });
         }
@@ -1279,6 +1474,32 @@
             });
         }
 
+        const messagePanel = document.getElementById("messagePanel");
+        if (messagePanel) {
+            messagePanel.addEventListener("click", async (event) => {
+                const button = event.target.closest("button[data-offer-decision]");
+                if (!button) {
+                    return;
+                }
+
+                const listingId = String(messagePanel.dataset.listingId || "").trim();
+                const messageId = String(button.dataset.messageId || "").trim();
+                const decision = String(button.dataset.offerDecision || "").trim();
+                if (!listingId || !messageId || !decision) {
+                    return;
+                }
+
+                try {
+                    await decideOffer(listingId, messageId, decision);
+                    await loadListingMessages(listingId, true);
+                    await loadMyListings(myListings);
+                    await loadNotifications(notificationList, notificationBadge);
+                } catch (error) {
+                    showToast(error.message || "Offer decision failed.", "error");
+                }
+            });
+        }
+
         if (escrowDeals) {
             escrowDeals.addEventListener("click", async (event) => {
                 const button = event.target.closest("button[data-escrow-action]");
@@ -1297,9 +1518,41 @@
                     await refreshCurrentUser();
                     renderProfileCard(profileCard, state.user);
                     await loadEscrowDeals(escrowDeals);
+                    await loadWalletTransactions(walletTransactions);
                     await loadMyListings(myListings);
                 } catch (error) {
                     showToast(error.message || "Escrow action failed.", "error");
+                }
+            });
+        }
+
+        if (notificationList) {
+            notificationList.addEventListener("click", async (event) => {
+                const button = event.target.closest("button[data-notification-id]");
+                if (!button) {
+                    return;
+                }
+                const notificationId = String(button.dataset.notificationId || "").trim();
+                if (!notificationId) {
+                    return;
+                }
+
+                try {
+                    await markNotificationRead(notificationId);
+                    await loadNotifications(notificationList, notificationBadge);
+                } catch (error) {
+                    showToast(error.message || "Could not update notification.", "error");
+                }
+            });
+        }
+
+        if (markAllNotificationsBtn) {
+            markAllNotificationsBtn.addEventListener("click", async () => {
+                try {
+                    await markAllNotificationsRead();
+                    await loadNotifications(notificationList, notificationBadge);
+                } catch (error) {
+                    showToast(error.message || "Could not mark notifications as read.", "error");
                 }
             });
         }
@@ -1378,6 +1631,151 @@
                                 Open Conversation
                             </button>
                         </div>
+                    </article>
+                `;
+            })
+            .join("");
+    }
+
+    async function loadNotifications(container, badgeElement) {
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = "<p class=\"empty-state\">Loading notifications...</p>";
+        const data = await apiRequest("/notifications", {}, true);
+        const notifications = Array.isArray(data.notifications) ? data.notifications : [];
+        const unreadCount = Number(data.unreadCount || 0);
+
+        if (badgeElement) {
+            badgeElement.textContent = `Unread: ${unreadCount}`;
+            badgeElement.className = unreadCount > 0 ? "badge badge-warning" : "badge badge-approved";
+        }
+
+        if (!notifications.length) {
+            container.innerHTML = "<p class=\"empty-state\">No notifications yet.</p>";
+            return;
+        }
+
+        container.innerHTML = notifications
+            .map((notification) => {
+                const type = String(notification.type || "system").trim().toLowerCase();
+                const title = String(notification.title || "Notification").trim();
+                const body = String(notification.body || "").trim();
+                const isUnread = !notification.read;
+                const meta = notification.meta || {};
+
+                const metaBits = [];
+                if (meta.listingId) {
+                    metaBits.push(`Listing #${String(meta.listingId).slice(-6)}`);
+                }
+                if (meta.escrowId) {
+                    metaBits.push(`Escrow #${String(meta.escrowId).slice(-6)}`);
+                }
+                if (meta.messageId) {
+                    metaBits.push(`Msg #${String(meta.messageId).slice(-6)}`);
+                }
+
+                const typeChip =
+                    type === "escrow"
+                        ? "<span class=\"chip chip-warning\">Escrow</span>"
+                        : type === "offer"
+                        ? "<span class=\"chip\">Offer</span>"
+                        : type === "wallet"
+                        ? "<span class=\"chip chip-verified\">Wallet</span>"
+                        : "<span class=\"chip\">System</span>";
+
+                return `
+                    <article class="inbox-item ${isUnread ? "unread" : ""}">
+                        <div class="inbox-top">
+                            <p class="inbox-title">${escapeHtml(title)}</p>
+                            <div class="meta-chips">
+                                ${typeChip}
+                                <span class="chip">${escapeHtml(formatRelativeTime(notification.createdAt))}</span>
+                                ${isUnread ? "<span class=\"chip chip-warning\">Unread</span>" : ""}
+                            </div>
+                        </div>
+                        <p class="card-hint">${escapeHtml(body)}</p>
+                        ${
+                            metaBits.length
+                                ? `<p class="inbox-meta">${escapeHtml(metaBits.join(" | "))}</p>`
+                                : ""
+                        }
+                        <div class="card-actions">
+                            ${
+                                isUnread
+                                    ? `<button class="btn btn-secondary" type="button" data-notification-id="${escapeHtml(
+                                          notification._id
+                                      )}">Mark Read</button>`
+                                    : "<span class=\"chip chip-verified\">Read</span>"
+                            }
+                        </div>
+                    </article>
+                `;
+            })
+            .join("");
+    }
+
+    async function markNotificationRead(notificationId) {
+        await apiRequest(
+            `/notifications/${notificationId}/read`,
+            {
+                method: "PATCH"
+            },
+            true
+        );
+    }
+
+    async function markAllNotificationsRead() {
+        await apiRequest(
+            "/notifications/read-all",
+            {
+                method: "PATCH"
+            },
+            true
+        );
+    }
+
+    async function loadWalletTransactions(container) {
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = "<p class=\"empty-state\">Loading wallet activity...</p>";
+        const data = await apiRequest("/escrow/wallet/transactions?limit=20", {}, true);
+        const transactions = Array.isArray(data.transactions) ? data.transactions : [];
+
+        if (!transactions.length) {
+            container.innerHTML =
+                "<p class=\"empty-state\">No wallet activity yet. Top up wallet or use escrow to see entries here.</p>";
+            return;
+        }
+
+        container.innerHTML = transactions
+            .map((entry) => {
+                const type = String(entry.type || "adjustment").trim().toLowerCase();
+                const amount = Number(entry.amount || 0);
+                const amountLabel = `${amount >= 0 ? "+" : ""}${formatCurrency(amount)}`;
+                const balanceLabel = formatCurrency(Number(entry.balanceAfter || 0));
+                const typeLabel = type.replace(/_/g, " ");
+
+                return `
+                    <article class="inbox-item">
+                        <div class="inbox-top">
+                            <p class="inbox-title">${escapeHtml(typeLabel)}</p>
+                            <div class="meta-chips">
+                                <span class="chip ${amount >= 0 ? "chip-verified" : "chip-warning"}">${escapeHtml(
+                    amountLabel
+                )}</span>
+                                <span class="chip">${escapeHtml(formatRelativeTime(entry.createdAt))}</span>
+                            </div>
+                        </div>
+                        <p class="inbox-meta">Balance after: ${escapeHtml(balanceLabel)}</p>
+                        ${
+                            entry.note
+                                ? `<p class="card-hint">${escapeHtml(entry.note)}</p>`
+                                : ""
+                        }
                     </article>
                 `;
             })
@@ -1618,6 +2016,10 @@
                     <span>Messages: ${escapeHtml(String(messageCount))}</span>
                 </div>
                 <div class="listing-meta">
+                    <span>Risk: ${escapeHtml(String(listing.riskLevel || "low"))}</span>
+                    <span>Score: ${escapeHtml(String(listing.riskScore || 0))}</span>
+                </div>
+                <div class="listing-meta">
                     <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>
                     <span>Views: ${escapeHtml(String(listing.viewsCount || 0))}</span>
                 </div>
@@ -1642,10 +2044,12 @@
             return;
         }
 
+        panel.dataset.listingId = listingId;
         panel.innerHTML = "<p class=\"muted\">Loading messages...</p>";
 
         const data = await apiRequest(`/listings/${listingId}/messages`, {}, true);
         const messages = Array.isArray(data.messages) ? data.messages : [];
+        const isSeller = !!data.isSeller;
 
         if (markReadForSeller) {
             try {
@@ -1680,9 +2084,47 @@
                     typeof message.offerAmount === "number" && message.offerAmount > 0
                         ? ` <strong>Offer: ${escapeHtml(formatCurrency(message.offerAmount))}</strong>`
                         : "";
+                const offerStatus = String(message.offerStatus || "").trim().toLowerCase();
                 const contactInfo = [senderEmail, senderPhone, senderCity]
                     .filter((value) => String(value || "").trim())
                     .join(" | ");
+                const offerStatusChip =
+                    message.type === "offer"
+                        ? `<span class="chip ${
+                              offerStatus === "accepted"
+                                  ? "chip-verified"
+                                  : offerStatus === "rejected"
+                                  ? "chip-warning"
+                                  : "chip"
+                          }">${escapeHtml(offerStatus || "pending")}</span>`
+                        : "";
+                const canDecideOffer =
+                    isSeller &&
+                    message.type === "offer" &&
+                    offerStatus === "pending" &&
+                    String(message.messageId || "").trim();
+                const offerActions = canDecideOffer
+                    ? `
+                        <div class="card-actions">
+                            <button
+                                class="btn btn-success"
+                                type="button"
+                                data-offer-decision="accepted"
+                                data-message-id="${escapeHtml(String(message.messageId || ""))}"
+                            >
+                                Accept Offer
+                            </button>
+                            <button
+                                class="btn btn-danger"
+                                type="button"
+                                data-offer-decision="rejected"
+                                data-message-id="${escapeHtml(String(message.messageId || ""))}"
+                            >
+                                Reject Offer
+                            </button>
+                        </div>
+                    `
+                    : "";
 
                 return `
                     <article class="message-item">
@@ -1690,11 +2132,17 @@
                     message.createdAt
                 )}${offerTag}</p>
                         ${
+                            offerStatusChip
+                                ? `<div class="meta-chips">${offerStatusChip}</div>`
+                                : ""
+                        }
+                        ${
                             contactInfo
                                 ? `<p class="message-meta">Contact: ${escapeHtml(contactInfo)}</p>`
                                 : ""
                         }
                         <p class="message-text">${escapeHtml(message.body)}</p>
+                        ${offerActions}
                     </article>
                 `;
             })
@@ -1752,6 +2200,9 @@
         const pendingListings = document.getElementById("pendingListings");
         const adminListings = document.getElementById("adminListings");
         const escrowDisputeRows = document.getElementById("escrowDisputeRows");
+        const notificationList = document.getElementById("notificationList");
+        const notificationBadge = document.getElementById("notificationBadge");
+        const markAllNotificationsBtn = document.getElementById("markAllNotificationsBtn");
         const adminUsersSection = document.getElementById("adminUsersSection");
         const adminUsersBody = document.getElementById("adminUserRows");
         const adminLogsSection = document.getElementById("adminLogsSection");
@@ -1772,6 +2223,7 @@
         if (refreshBtn) {
             refreshBtn.addEventListener("click", async () => {
                 await refreshAdminData();
+                await loadNotifications(notificationList, notificationBadge);
                 showToast("Admin data refreshed.", "success");
             });
         }
@@ -1886,7 +2338,39 @@
             });
         }
 
+        if (notificationList) {
+            notificationList.addEventListener("click", async (event) => {
+                const button = event.target.closest("button[data-notification-id]");
+                if (!button) {
+                    return;
+                }
+                const notificationId = String(button.dataset.notificationId || "").trim();
+                if (!notificationId) {
+                    return;
+                }
+
+                try {
+                    await markNotificationRead(notificationId);
+                    await loadNotifications(notificationList, notificationBadge);
+                } catch (error) {
+                    showToast(error.message || "Could not update notification.", "error");
+                }
+            });
+        }
+
+        if (markAllNotificationsBtn) {
+            markAllNotificationsBtn.addEventListener("click", async () => {
+                try {
+                    await markAllNotificationsRead();
+                    await loadNotifications(notificationList, notificationBadge);
+                } catch (error) {
+                    showToast(error.message || "Could not mark notifications as read.", "error");
+                }
+            });
+        }
+
         await refreshAdminData();
+        await loadNotifications(notificationList, notificationBadge);
     }
 
     async function refreshAdminData() {
@@ -1933,6 +2417,7 @@
             <article class="metric"><h3>Rejected</h3><p>${escapeHtml(String(data.rejectedListings || 0))}</p></article>
             <article class="metric"><h3>Sold</h3><p>${escapeHtml(String(data.soldListings || 0))}</p></article>
             <article class="metric"><h3>Flagged</h3><p>${escapeHtml(String(data.flaggedListings || 0))}</p></article>
+            <article class="metric"><h3>High Risk</h3><p>${escapeHtml(String(data.highRiskListings || 0))}</p></article>
             <article class="metric"><h3>Avg Price</h3><p>${escapeHtml(formatCurrency(data.averagePrice || 0))}</p></article>
             <article class="metric"><h3>Avg Reputation</h3><p>${escapeHtml(String(data.averageReputation || 0))}</p></article>
         `;
@@ -2239,6 +2724,9 @@
             `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
             `<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`
         ];
+        if (String(listing.listingType || "").toLowerCase() === "service") {
+            chips.push("<span class=\"chip\">Service</span>");
+        }
         if (listing.deliveryAvailable) {
             chips.push("<span class=\"chip\">Delivery</span>");
         }
@@ -2253,6 +2741,11 @@
         }
         if (sellerVerified) {
             chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
+        }
+        if (String(listing.riskLevel || "").toLowerCase() === "high") {
+            chips.push("<span class=\"chip chip-warning\">High Risk</span>");
+        } else if (String(listing.riskLevel || "").toLowerCase() === "medium") {
+            chips.push("<span class=\"chip\">Medium Risk</span>");
         }
 
         let moderationButtons = "";
@@ -2305,6 +2798,10 @@
                 <div class="listing-meta">
                     <span>${escapeHtml(sellerEmail)}</span>
                     <span>Reports: ${escapeHtml(String(listing.reportsCount || 0))}</span>
+                </div>
+                <div class="listing-meta">
+                    <span>Risk: ${escapeHtml(String(listing.riskLevel || "low"))}</span>
+                    <span>Score: ${escapeHtml(String(listing.riskScore || 0))}</span>
                 </div>
                 <div class="listing-meta">
                     <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>

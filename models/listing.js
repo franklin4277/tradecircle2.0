@@ -2,6 +2,12 @@
 
 const listingMessageSchema = new mongoose.Schema(
     {
+        messageId: {
+            type: String,
+            trim: true,
+            maxlength: 64,
+            default: ""
+        },
         sender: {
             type: mongoose.Schema.Types.ObjectId,
             ref: "User",
@@ -49,6 +55,20 @@ const listingMessageSchema = new mongoose.Schema(
         offerAmount: {
             type: Number,
             min: 0,
+            default: null
+        },
+        offerStatus: {
+            type: String,
+            enum: ["pending", "accepted", "rejected", "withdrawn"],
+            default: "pending"
+        },
+        offerDecisionBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null
+        },
+        offerDecisionAt: {
+            type: Date,
             default: null
         },
         createdAt: {
@@ -106,10 +126,31 @@ const listingSchema = new mongoose.Schema(
             ],
             default: "Other"
         },
+        listingType: {
+            type: String,
+            enum: ["item", "service"],
+            default: "item",
+            index: true
+        },
         itemCondition: {
             type: String,
             enum: ["Brand New", "Like New", "Used - Good", "Used - Fair", "Refurbished"],
             default: "Used - Good"
+        },
+        serviceRateType: {
+            type: String,
+            enum: ["fixed", "hourly", "daily", "negotiable"],
+            default: "fixed"
+        },
+        serviceRemoteAvailable: {
+            type: Boolean,
+            default: false
+        },
+        serviceResponseTimeHours: {
+            type: Number,
+            min: 1,
+            max: 168,
+            default: 24
         },
         negotiable: {
             type: Boolean,
@@ -165,6 +206,26 @@ const listingSchema = new mongoose.Schema(
             default: 0,
             min: 0
         },
+        riskScore: {
+            type: Number,
+            min: 0,
+            max: 100,
+            default: 0
+        },
+        riskLevel: {
+            type: String,
+            enum: ["low", "medium", "high"],
+            default: "low"
+        },
+        riskFlags: {
+            type: [String],
+            default: []
+        },
+        flaggedForFraud: {
+            type: Boolean,
+            default: false,
+            index: true
+        },
         messages: [listingMessageSchema]
     },
     { timestamps: true }
@@ -176,6 +237,15 @@ listingSchema.index({ status: 1, category: 1, location: 1, price: 1 });
 listingSchema.pre("validate", function setLegacySeller() {
     if (!this.seller && this.owner) {
         this.seller = this.owner;
+    }
+
+    if (String(this.category || "").toLowerCase() === "services") {
+        this.listingType = "service";
+        this.itemCondition = "Used - Good";
+        this.deliveryAvailable = false;
+        this.availability = "available";
+    } else {
+        this.listingType = "item";
     }
 });
 

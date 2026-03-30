@@ -100,6 +100,19 @@ const escrowSchema = new mongoose.Schema(
             type: Date,
             default: null
         },
+        shipByAt: {
+            type: Date,
+            default: null,
+            index: true
+        },
+        reminderSentAt: {
+            type: Date,
+            default: null
+        },
+        autoRefundedAt: {
+            type: Date,
+            default: null
+        },
         events: [escrowEventSchema]
     },
     { timestamps: true }

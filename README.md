@@ -21,6 +21,9 @@ admin analytics, moderation logs, and seller-buyer messaging.
   - `report.js`
   - `adminLog.js`
   - `escrow.js`
+  - `notification.js`
+  - `walletTransaction.js`
+  - `refreshToken.js`
 - `config/`
   - `storage.js`
 - `middleware/`
@@ -32,6 +35,9 @@ admin analytics, moderation logs, and seller-buyer messaging.
   - `listings.js`
   - `escrow.js`
   - `admin.js`
+  - `notifications.js`
+- `services/`
+  - `escrowSla.js`
 - `scripts/`
   - `migrate-owner-to-seller.js`
 - `tests/`
@@ -49,6 +55,7 @@ admin analytics, moderation logs, and seller-buyer messaging.
 ## Features
 
 - Authentication and role-based access (`user`, `moderator`, `admin`)
+- JWT auth with secure HttpOnly cookie session rotation (access + refresh tokens)
 - Community verification workflow (users must be verified before trading actions)
 - Strong password policy for registration (minimum 8 characters with letters and numbers; stricter for admin)
 - User reputation system (default 100)
@@ -63,13 +70,19 @@ admin analytics, moderation logs, and seller-buyer messaging.
 - Admin analytics (users, verification, listings, reports, statuses)
 - Admin user management (verify users, manage moderator role) + moderation logs
 - Messaging on listings
+- Offer workflow (buyer sends offer, seller accepts/rejects, accepted offer unlocks secure hold)
 - Seller inbox with unread counts + mark-as-read flow
+- Notification center (messages, offers, escrow, wallet, moderation updates)
 - Escrow secure hold flow:
   - buyer funds hold in-platform from a demo wallet balance
+  - escrow requires seller-accepted buyer offer
+  - service-category listings are connection-only (no in-app payment)
   - seller marks shipped
   - buyer confirms delivery before funds release
   - dispute + admin/moderator resolution path
+- Escrow SLA worker (shipping reminders + auto-refund on timeout)
 - Demo wallet ledger (available vs held balance) for realistic escrow simulation
+- Wallet transaction history for auditability (topups, holds, releases, refunds)
 - Offline payment alignment for first-phase scope (online payment simulation disabled by default)
 - Basic in-memory API rate limiting
 
@@ -95,6 +108,11 @@ Create a `.env` file in the project root.
 NODE_ENV=development
 MONGO_URI=your_mongodb_atlas_connection_string
 JWT_SECRET=your_strong_jwt_secret
+# Recommended dedicated refresh secret (falls back to JWT_SECRET if omitted)
+REFRESH_TOKEN_SECRET=your_strong_refresh_secret
+# Optional token lifetimes
+ACCESS_TOKEN_TTL=15m
+REFRESH_TOKEN_DAYS=7
 PORT=5000
 CORS_ORIGIN=http://localhost:5000
 
@@ -119,6 +137,10 @@ ENABLE_SIMULATED_PAYMENTS=false
 
 # Optional: escrow fee percent for secure hold flow
 ESCROW_FEE_PERCENT=2
+# Optional escrow SLA settings
+ESCROW_SHIP_WINDOW_HOURS=72
+ESCROW_REMINDER_LEAD_HOURS=24
+ESCROW_SLA_INTERVAL_MS=300000
 
 # Optional: persistent uploads directory (Render disk mount example)
 UPLOADS_DIR=/var/data/uploads
@@ -127,6 +149,7 @@ UPLOADS_DIR=/var/data/uploads
 Production notes:
 
 - `JWT_SECRET` is required.
+- `REFRESH_TOKEN_SECRET` is strongly recommended in production (different from `JWT_SECRET`).
 - `CORS_ORIGIN` must be a comma-separated list of valid `http(s)` origins.
 - In production, `CORS_ORIGIN` must be set.
 - `ALLOW_ADMIN_REGISTRATION` and `ALLOW_ADMIN_PROMOTION` are `false` by default for stronger admin security.

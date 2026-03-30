@@ -1,32 +1,60 @@
-﻿const jwt = require("jsonwebtoken");
+const jwt = require("jsonwebtoken");
 const User = require("../models/user");
 
-const JWT_SECRET = process.env.JWT_SECRET;
+const ACCESS_TOKEN_SECRET = process.env.JWT_SECRET;
 
-function ensureJwtSecret() {
-    if (!JWT_SECRET) {
+function ensureAccessSecret() {
+    if (!ACCESS_TOKEN_SECRET) {
         throw new Error("JWT_SECRET environment variable is required.");
     }
 }
 
-function generateToken(user) {
-    ensureJwtSecret();
-    return jwt.sign({ id: String(user._id) }, JWT_SECRET, { expiresIn: "7d" });
+function generateAccessToken(user, expiresIn = "15m") {
+    ensureAccessSecret();
+    return jwt.sign({ id: String(user._id) }, ACCESS_TOKEN_SECRET, { expiresIn });
+}
+
+function parseCookies(req) {
+    if (req && req.cookies && typeof req.cookies === "object") {
+        return req.cookies;
+    }
+
+    const header = String((req && req.headers && req.headers.cookie) || "").trim();
+    if (!header) {
+        return {};
+    }
+
+    return header.split(";").reduce((acc, part) => {
+        const [rawKey, ...rawValue] = part.split("=");
+        const key = String(rawKey || "").trim();
+        if (!key) {
+            return acc;
+        }
+        acc[key] = decodeURIComponent(rawValue.join("=").trim());
+        return acc;
+    }, {});
+}
+
+function getAccessTokenFromRequest(req) {
+    const authHeader = req.headers.authorization || "";
+    if (authHeader.startsWith("Bearer ")) {
+        return authHeader.slice(7).trim();
+    }
+
+    const cookies = parseCookies(req);
+    return String(cookies.tc_access || "").trim();
 }
 
 async function auth(req, res, next) {
     try {
-        const authHeader = req.headers.authorization || "";
-        const token = authHeader.startsWith("Bearer ")
-            ? authHeader.slice(7).trim()
-            : "";
+        const token = getAccessTokenFromRequest(req);
 
         if (!token) {
             return res.status(401).json({ message: "Authorization token missing." });
         }
 
-        ensureJwtSecret();
-        const payload = jwt.verify(token, JWT_SECRET);
+        ensureAccessSecret();
+        const payload = jwt.verify(token, ACCESS_TOKEN_SECRET);
         const user = await User.findById(payload.id).select(
             "name email role reputationScore phoneNumber city verifiedSeller communityVerified walletBalance walletHeldBalance"
         );
@@ -88,5 +116,8 @@ module.exports = {
     auth,
     requireRole,
     requireCommunityVerified,
-    generateToken
+    generateToken: generateAccessToken,
+    generateAccessToken,
+    parseCookies,
+    getAccessTokenFromRequest
 };

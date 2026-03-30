@@ -7,6 +7,7 @@ const AdminLog = require("../models/adminLog");
 const Escrow = require("../models/escrow");
 const { auth, requireRole } = require("../middleware/auth");
 const { adjustReputation } = require("../utils/reputation");
+const { createNotification } = require("../utils/notifications");
 
 const router = express.Router();
 
@@ -76,6 +77,7 @@ router.get("/analytics", async (req, res, next) => {
             rejectedListings,
             soldListings,
             flaggedListings,
+            highRiskListings,
             verifiedUsers,
             totalEscrows,
             disputedEscrows,
@@ -93,6 +95,7 @@ router.get("/analytics", async (req, res, next) => {
             Listing.countDocuments({ status: "rejected" }),
             Listing.countDocuments({ availability: "sold" }),
             Listing.countDocuments({ reportsCount: { $gte: 2 } }),
+            Listing.countDocuments({ riskLevel: "high" }),
             User.countDocuments({ communityVerified: true }),
             Escrow.countDocuments(),
             Escrow.countDocuments({ status: "disputed" }),
@@ -134,6 +137,7 @@ router.get("/analytics", async (req, res, next) => {
             rejectedListings,
             soldListings,
             flaggedListings,
+            highRiskListings,
             totalEscrows,
             disputedEscrows,
             releasedEscrows,
@@ -228,6 +232,14 @@ router.patch("/listings/:id/status", async (req, res, next) => {
         await writeAdminLog(req, "listing_status_change", "listing", listingId, {
             previousStatus,
             nextStatus: status
+        });
+
+        await createNotification({
+            userId: sellerId,
+            type: "listing",
+            title: "Listing Moderation Update",
+            body: `Your listing status changed from ${previousStatus} to ${status}.`,
+            listingId: listing._id
         });
 
         return res.json({ message: `Listing ${status}.` });

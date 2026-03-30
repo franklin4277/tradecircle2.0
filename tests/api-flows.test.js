@@ -194,6 +194,52 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
         .send({ amount: 100000 })
         .expect(201);
 
+    await request(app)
+        .post("/api/escrow/start")
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .send({
+            listingId,
+            amount: 70000,
+            note: "Trying escrow before negotiation."
+        })
+        .expect(400);
+
+    const serviceListingCreate = await request(app)
+        .post("/api/listings")
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .send({
+            title: "Website Setup Service",
+            description: "Professional website setup and training for beginners.",
+            price: 15000,
+            location: "Nairobi",
+            category: "Services",
+            itemCondition: "Used - Good",
+            contactPhone: "0712345678",
+            negotiable: true,
+            deliveryAvailable: false,
+            meetupAvailable: true
+        })
+        .expect(201);
+    const serviceListingId =
+        serviceListingCreate.body.listing && serviceListingCreate.body.listing._id;
+    assert.ok(serviceListingId);
+
+    await request(app)
+        .patch(`/api/admin/listings/${serviceListingId}/status`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ status: "approved" })
+        .expect(200);
+
+    await request(app)
+        .post("/api/escrow/start")
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .send({
+            listingId: serviceListingId,
+            amount: 15000,
+            note: "Service escrow should be blocked."
+        })
+        .expect(400);
+
     const unverifiedBuyerRegister = await request(app)
         .post("/api/auth/register")
         .send({
@@ -253,6 +299,35 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
         .expect(201);
     assert.equal(reportResponse.body.reportsCount, 1);
 
+    const offerMessage = await request(app)
+        .post(`/api/listings/${listingId}/messages`)
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .send({
+            message: "I can take it for KES 70,000 if we close today.",
+            offerAmount: 70000
+        })
+        .expect(201);
+    assert.equal(offerMessage.body.message, "Offer sent to seller.");
+
+    const sellerMessagesWithOffer = await request(app)
+        .get(`/api/listings/${listingId}/messages`)
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .expect(200);
+    const offerEntry = sellerMessagesWithOffer.body.messages.find(
+        (message) =>
+            message.type === "offer" &&
+            Number(message.offerAmount) === 70000 &&
+            message.offerStatus === "pending"
+    );
+    assert.ok(offerEntry && offerEntry.messageId);
+
+    const offerDecision = await request(app)
+        .patch(`/api/listings/${listingId}/offers/${offerEntry.messageId}/decision`)
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .send({ decision: "accepted" })
+        .expect(200);
+    assert.equal(offerDecision.body.decision, "accepted");
+
     const escrowStart = await request(app)
         .post("/api/escrow/start")
         .set("Authorization", `Bearer ${buyerToken}`)
@@ -284,7 +359,11 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
         .get("/api/listings/mine")
         .set("Authorization", `Bearer ${sellerToken}`)
         .expect(200);
-    assert.equal(sellerListingsAfterRelease.body.listings[0].availability, "sold");
+    const releasedListing = sellerListingsAfterRelease.body.listings.find(
+        (entry) => String(entry._id) === String(listingId)
+    );
+    assert.ok(releasedListing);
+    assert.equal(releasedListing.availability, "sold");
 
     const sellerProfileAfterRelease = await request(app)
         .get("/api/auth/me")

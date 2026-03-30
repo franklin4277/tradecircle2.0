@@ -92,7 +92,7 @@
 
                     <label>
                         Condition
-                        <select name="itemCondition" required>
+                        <select id="itemConditionInput" name="itemCondition" required>
                             <option value="Brand New">Brand New</option>
                             <option value="Like New">Like New</option>
                             <option value="Used - Good" selected>Used - Good</option>
@@ -101,6 +101,35 @@
                         </select>
                     </label>
                 </div>
+
+                <div id="serviceFields" class="form-grid-two hidden">
+                    <label>
+                        Service Rate Type
+                        <select name="serviceRateType">
+                            <option value="fixed" selected>Fixed</option>
+                            <option value="hourly">Hourly</option>
+                            <option value="daily">Daily</option>
+                            <option value="negotiable">Negotiable</option>
+                        </select>
+                    </label>
+
+                    <label>
+                        Response Time (hours)
+                        <input
+                            type="number"
+                            name="serviceResponseTimeHours"
+                            min="1"
+                            max="168"
+                            step="1"
+                            value="24"
+                        >
+                    </label>
+                </div>
+
+                <label id="serviceRemoteField" class="check-row hidden">
+                    <input type="checkbox" name="serviceRemoteAvailable">
+                    <span>Service can be offered remotely</span>
+                </label>
 
                 <label>
                     Location
@@ -169,6 +198,28 @@
                 </div>
             </div>
             <div id="escrowDeals" class="inbox-list"></div>
+        </section>
+
+        <section class="panel dashboard-wide">
+            <div class="panel-head">
+                <h2>Wallet Activity</h2>
+                <p>Top-ups, holds, refunds, and releases are recorded for transparency.</p>
+            </div>
+            <div id="walletTransactions" class="inbox-list"></div>
+        </section>
+
+        <section class="panel dashboard-wide">
+            <div class="panel-head row-between">
+                <div>
+                    <h2>Notifications</h2>
+                    <p>Messages, offer decisions, escrow updates, and moderation alerts.</p>
+                </div>
+                <div class="card-actions">
+                    <span id="notificationBadge" class="badge badge-pending">Unread: 0</span>
+                    <button id="markAllNotificationsBtn" type="button" class="btn btn-secondary">Mark All Read</button>
+                </div>
+            </div>
+            <div id="notificationList" class="inbox-list"></div>
         </section>
 
         <section class="panel dashboard-wide">

@@ -40,6 +40,20 @@
         </section>
 
         <section class="panel">
+            <div class="panel-head row-between">
+                <div>
+                    <h2>Notifications</h2>
+                    <p>System alerts, dispute updates, and moderation flow events.</p>
+                </div>
+                <div class="card-actions">
+                    <span id="notificationBadge" class="badge badge-pending">Unread: 0</span>
+                    <button id="markAllNotificationsBtn" type="button" class="btn btn-secondary">Mark All Read</button>
+                </div>
+            </div>
+            <div id="notificationList" class="inbox-list"></div>
+        </section>
+
+        <section class="panel">
             <div class="panel-head">
                 <h2>Pending Listings</h2>
                 <p>Approve or reject submissions from users.</p>
