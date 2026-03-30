@@ -117,6 +117,51 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
     const listingId = listingCreate.body.listing && listingCreate.body.listing._id;
     assert.ok(listingId);
 
+    const moderatorRegister = await request(app)
+        .post("/api/auth/register")
+        .send({
+            name: "Moderator One",
+            email: "moderator@example.com",
+            password: "password123",
+            phoneNumber: "0700000003",
+            city: "Nairobi"
+        })
+        .expect(201);
+    const moderatorToken = moderatorRegister.body.token;
+    const moderatorId = moderatorRegister.body.user && moderatorRegister.body.user._id;
+    assert.ok(moderatorId);
+
+    await request(app)
+        .patch(`/api/admin/users/${moderatorId}/role`)
+        .set("Authorization", `Bearer ${adminToken}`)
+        .send({ role: "moderator" })
+        .expect(200);
+
+    const listingForRemoval = await request(app)
+        .post("/api/listings")
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .send({
+            title: "Old Listing To Remove",
+            description: "Temporary listing to verify moderator removal action works.",
+            price: 5000,
+            location: "Nakuru",
+            category: "Electronics",
+            itemCondition: "Used - Good",
+            contactPhone: "0712345678",
+            negotiable: true,
+            deliveryAvailable: false,
+            meetupAvailable: true
+        })
+        .expect(201);
+
+    const listingRemovalId = listingForRemoval.body.listing && listingForRemoval.body.listing._id;
+    assert.ok(listingRemovalId);
+
+    await request(app)
+        .delete(`/api/listings/${listingRemovalId}`)
+        .set("Authorization", `Bearer ${moderatorToken}`)
+        .expect(200);
+
     await request(app)
         .patch(`/api/admin/listings/${listingId}/status`)
         .set("Authorization", `Bearer ${adminToken}`)
@@ -142,6 +187,12 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
         .set("Authorization", `Bearer ${adminToken}`)
         .send({ communityVerified: true })
         .expect(200);
+
+    await request(app)
+        .post("/api/escrow/wallet/topup")
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .send({ amount: 100000 })
+        .expect(201);
 
     const unverifiedBuyerRegister = await request(app)
         .post("/api/auth/register")
@@ -201,4 +252,43 @@ test("critical flows: auth, listing creation, moderation, messaging inbox, repor
         })
         .expect(201);
     assert.equal(reportResponse.body.reportsCount, 1);
+
+    const escrowStart = await request(app)
+        .post("/api/escrow/start")
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .send({
+            listingId,
+            amount: 70000,
+            note: "Will confirm once phone is delivered."
+        })
+        .expect(201);
+    assert.equal(escrowStart.body.escrow.status, "funded");
+    const escrowId = escrowStart.body.escrow && escrowStart.body.escrow._id;
+    assert.ok(escrowId);
+
+    const sellerShip = await request(app)
+        .patch(`/api/escrow/${escrowId}/ship`)
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .expect(200);
+    assert.equal(sellerShip.body.escrow.status, "shipped");
+
+    const buyerConfirm = await request(app)
+        .patch(`/api/escrow/${escrowId}/confirm`)
+        .set("Authorization", `Bearer ${buyerToken}`)
+        .expect(200);
+    assert.equal(buyerConfirm.body.escrow.status, "released");
+    assert.equal(buyerConfirm.body.buyerWallet.held, 0);
+    assert.equal(buyerConfirm.body.sellerWallet.available, 70000);
+
+    const sellerListingsAfterRelease = await request(app)
+        .get("/api/listings/mine")
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .expect(200);
+    assert.equal(sellerListingsAfterRelease.body.listings[0].availability, "sold");
+
+    const sellerProfileAfterRelease = await request(app)
+        .get("/api/auth/me")
+        .set("Authorization", `Bearer ${sellerToken}`)
+        .expect(200);
+    assert.equal(sellerProfileAfterRelease.body.user.walletBalance, 70000);
 });

@@ -33,6 +33,10 @@ body {
     padding: 0;
 }
 
+html {
+    scroll-behavior: smooth;
+}
+
 body {
     font-family: "Manrope", sans-serif;
     color: var(--text);
@@ -43,6 +47,11 @@ body {
 a {
     color: inherit;
     text-decoration: none;
+}
+
+:focus-visible {
+    outline: 3px solid rgba(0, 102, 255, 0.35);
+    outline-offset: 2px;
 }
 
 img {
@@ -60,6 +69,10 @@ img {
     transition: transform 0.25s ease, box-shadow 0.25s ease;
 }
 
+.navbar-scrolled {
+    box-shadow: 0 14px 28px rgba(0, 66, 170, 0.12);
+}
+
 .navbar-hidden {
     transform: translateY(-115%);
 }
@@ -71,6 +84,8 @@ img {
     display: flex;
     align-items: center;
     gap: 0.75rem;
+    position: relative;
+    transition: border-radius 0.25s ease, background 0.25s ease, box-shadow 0.25s ease;
 }
 
 .logo {
@@ -95,6 +110,7 @@ img {
     font-size: 0.78rem;
     font-weight: 800;
     box-shadow: 0 6px 16px rgba(0, 102, 255, 0.33);
+    animation: pulseMark 4.2s ease-in-out infinite;
 }
 
 .nav-search {
@@ -112,6 +128,48 @@ img {
     gap: 0.45rem;
     flex-wrap: wrap;
     justify-content: flex-end;
+}
+
+.nav-toggle {
+    display: none;
+    width: 2.6rem;
+    height: 2.6rem;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: linear-gradient(150deg, #ffffff 0%, #eef4ff 100%);
+    align-items: center;
+    justify-content: center;
+    gap: 0.23rem;
+    flex-direction: column;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.nav-toggle:hover {
+    transform: translateY(-1px);
+    border-color: #9cc0ff;
+    box-shadow: 0 12px 24px rgba(0, 77, 192, 0.14);
+}
+
+.nav-toggle span {
+    width: 1.05rem;
+    height: 2px;
+    border-radius: 999px;
+    background: #0f3c74;
+    transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+.nav-toggle.is-open span:nth-child(1) {
+    transform: translateY(6px) rotate(45deg);
+}
+
+.nav-toggle.is-open span:nth-child(2) {
+    opacity: 0;
+}
+
+.nav-toggle.is-open span:nth-child(3) {
+    transform: translateY(-6px) rotate(-45deg);
 }
 
 .page-wrap {
@@ -191,6 +249,8 @@ img {
 .panel-head h2 {
     margin: 0;
     color: #123160;
+    line-height: 1.25;
+    letter-spacing: 0.01em;
 }
 
 .panel-head p {
@@ -296,6 +356,8 @@ select:focus {
     align-items: center;
     justify-content: center;
     gap: 0.35rem;
+    position: relative;
+    overflow: hidden;
 }
 
 .btn:hover {
@@ -312,8 +374,26 @@ select:focus {
     box-shadow: 0 10px 16px rgba(0, 102, 255, 0.22);
 }
 
+.btn-primary::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        120deg,
+        rgba(255, 255, 255, 0) 20%,
+        rgba(255, 255, 255, 0.34) 48%,
+        rgba(255, 255, 255, 0) 78%
+    );
+    transform: translateX(-125%);
+    transition: transform 0.55s ease;
+}
+
 .btn-primary:hover {
     background: linear-gradient(140deg, #005ae0 0%, #1f7fff 100%);
+}
+
+.btn-primary:hover::after {
+    transform: translateX(125%);
 }
 
 .btn-secondary {
@@ -363,11 +443,24 @@ select:focus {
     display: grid;
     overflow: hidden;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
+    animation: cardRise 0.42s ease both;
 }
 
 .listing-card:hover {
     transform: translateY(-4px);
     box-shadow: var(--shadow-md);
+}
+
+.listing-grid .listing-card:nth-child(2) {
+    animation-delay: 0.04s;
+}
+
+.listing-grid .listing-card:nth-child(3) {
+    animation-delay: 0.08s;
+}
+
+.listing-grid .listing-card:nth-child(4) {
+    animation-delay: 0.12s;
 }
 
 .listing-image {
@@ -546,6 +639,10 @@ select:focus {
     color: #0d2f62;
 }
 
+.wallet-topup-form {
+    margin-top: 0.85rem;
+}
+
 .analytics-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
@@ -601,6 +698,14 @@ select:focus {
     font-size: 0.82rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+}
+
+.report-table tbody tr:nth-child(even) {
+    background: #f8fbff;
+}
+
+.report-table tbody tr:hover {
+    background: #eef5ff;
 }
 
 .table-actions {
@@ -721,23 +826,103 @@ select:focus {
     transform: translateY(0);
 }
 
+@keyframes pulseMark {
+    0%,
+    100% {
+        transform: translateY(0);
+    }
+    50% {
+        transform: translateY(-1px);
+    }
+}
+
+@keyframes cardRise {
+    from {
+        opacity: 0;
+        transform: translateY(14px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .logo-mark,
+    .listing-card {
+        animation: none !important;
+    }
+
+    .btn,
+    .nav-toggle,
+    .nav-search,
+    .nav-links,
+    .navbar {
+        transition: none !important;
+    }
+}
+
 @media (max-width: 960px) {
     .dashboard-grid {
         grid-template-columns: 1fr;
     }
 
     .nav-inner {
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 0.6rem;
+    }
+
+    .nav-inner.menu-open {
+        border-radius: 18px;
+        background: linear-gradient(145deg, rgba(255, 255, 255, 0.98) 0%, #eef5ff 100%);
+        box-shadow: 0 16px 30px rgba(0, 73, 184, 0.16);
+    }
+
+    .nav-toggle {
+        display: inline-flex;
+    }
+
+    .nav-search,
+    .nav-links {
+        grid-column: 1 / -1;
+        opacity: 0;
+        transform: translateY(-8px);
+        pointer-events: none;
+        max-height: 0;
+        overflow: hidden;
+        transition:
+            max-height 0.28s ease,
+            opacity 0.22s ease,
+            transform 0.22s ease;
+    }
+
+    .nav-inner.menu-open .nav-search,
+    .nav-inner.menu-open .nav-links {
+        opacity: 1;
+        transform: translateY(0);
+        pointer-events: auto;
+        max-height: 260px;
     }
 
     .nav-search {
-        order: 3;
         width: 100%;
         max-width: none;
+        padding-top: 0.15rem;
     }
 
     .nav-links {
         margin-left: 0;
+        width: 100%;
+        justify-content: flex-start;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.42rem;
+        padding-bottom: 0.2rem;
+    }
+
+    .nav-links .btn {
         width: 100%;
         justify-content: flex-start;
     }

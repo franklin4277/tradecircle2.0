@@ -4,6 +4,7 @@ const Listing = require("../models/listing");
 const Report = require("../models/report");
 const User = require("../models/user");
 const AdminLog = require("../models/adminLog");
+const Escrow = require("../models/escrow");
 const { auth, requireRole } = require("../middleware/auth");
 const { adjustReputation } = require("../utils/reputation");
 
@@ -76,6 +77,10 @@ router.get("/analytics", async (req, res, next) => {
             soldListings,
             flaggedListings,
             verifiedUsers,
+            totalEscrows,
+            disputedEscrows,
+            releasedEscrows,
+            activeEscrowHeldAggregation,
             avgPriceAggregation,
             avgReputationAggregation
         ] = await Promise.all([
@@ -89,6 +94,22 @@ router.get("/analytics", async (req, res, next) => {
             Listing.countDocuments({ availability: "sold" }),
             Listing.countDocuments({ reportsCount: { $gte: 2 } }),
             User.countDocuments({ communityVerified: true }),
+            Escrow.countDocuments(),
+            Escrow.countDocuments({ status: "disputed" }),
+            Escrow.countDocuments({ status: "released" }),
+            Escrow.aggregate([
+                {
+                    $match: {
+                        status: { $in: ["funded", "shipped", "disputed"] }
+                    }
+                },
+                {
+                    $group: {
+                        _id: null,
+                        heldAmount: { $sum: "$totalHeld" }
+                    }
+                }
+            ]),
             Listing.aggregate([{ $group: { _id: null, avgPrice: { $avg: "$price" } } }]),
             User.aggregate([{ $group: { _id: null, avgReputation: { $avg: "$reputationScore" } } }])
         ]);
@@ -96,6 +117,9 @@ router.get("/analytics", async (req, res, next) => {
         const avgPrice = Number((avgPriceAggregation[0] && avgPriceAggregation[0].avgPrice) || 0);
         const avgReputation = Number(
             (avgReputationAggregation[0] && avgReputationAggregation[0].avgReputation) || 0
+        );
+        const activeEscrowHeld = Number(
+            (activeEscrowHeldAggregation[0] && activeEscrowHeldAggregation[0].heldAmount) || 0
         );
 
         return res.json({
@@ -110,6 +134,10 @@ router.get("/analytics", async (req, res, next) => {
             rejectedListings,
             soldListings,
             flaggedListings,
+            totalEscrows,
+            disputedEscrows,
+            releasedEscrows,
+            activeEscrowHeld: Number(activeEscrowHeld.toFixed(2)),
             averagePrice: Number(avgPrice.toFixed(2)),
             averageReputation: Number(avgReputation.toFixed(1))
         });
@@ -248,7 +276,9 @@ router.get("/users", requireRole("admin"), async (req, res, next) => {
         }
 
         const users = await User.find(query)
-            .select("name email role communityVerified reputationScore verifiedSeller city lastSeenAt createdAt")
+            .select(
+                "name email role communityVerified reputationScore walletBalance walletHeldBalance verifiedSeller city lastSeenAt createdAt"
+            )
             .sort({ createdAt: -1 })
             .limit(500);
 

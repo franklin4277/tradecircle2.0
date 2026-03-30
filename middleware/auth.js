@@ -28,7 +28,7 @@ async function auth(req, res, next) {
         ensureJwtSecret();
         const payload = jwt.verify(token, JWT_SECRET);
         const user = await User.findById(payload.id).select(
-            "name email role reputationScore phoneNumber city verifiedSeller communityVerified"
+            "name email role reputationScore phoneNumber city verifiedSeller communityVerified walletBalance walletHeldBalance"
         );
 
         if (!user) {
@@ -44,7 +44,9 @@ async function auth(req, res, next) {
             phoneNumber: user.phoneNumber || "",
             city: user.city || "",
             communityVerified: !!user.communityVerified,
-            verifiedSeller: !!user.verifiedSeller
+            verifiedSeller: !!user.verifiedSeller,
+            walletBalance: Number(user.walletBalance || 0),
+            walletHeldBalance: Number(user.walletHeldBalance || 0)
         };
 
         return next();

@@ -11,6 +11,7 @@ const helmet = require("helmet");
 const User = require("./models/user");
 const authRoutes = require("./routes/auth");
 const listingRoutes = require("./routes/listings");
+const escrowRoutes = require("./routes/escrow");
 const adminRoutes = require("./routes/admin");
 const { createRateLimiter } = require("./middleware/rateLimit");
 const { sanitizeRequest } = require("./middleware/sanitize");
@@ -150,6 +151,7 @@ app.get("/health", (_, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/listings", listingRoutes);
+app.use("/api/escrow", escrowRoutes);
 app.use("/api/admin", adminRoutes);
 
 app.get("/", (_, res) => {

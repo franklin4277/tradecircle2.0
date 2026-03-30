@@ -20,6 +20,7 @@ admin analytics, moderation logs, and seller-buyer messaging.
   - `listing.js`
   - `report.js`
   - `adminLog.js`
+  - `escrow.js`
 - `config/`
   - `storage.js`
 - `middleware/`
@@ -29,6 +30,7 @@ admin analytics, moderation logs, and seller-buyer messaging.
 - `routes/`
   - `auth.js`
   - `listings.js`
+  - `escrow.js`
   - `admin.js`
 - `scripts/`
   - `migrate-owner-to-seller.js`
@@ -52,6 +54,7 @@ admin analytics, moderation logs, and seller-buyer messaging.
 - User reputation system (default 100)
 - Listing creation with image uploads
 - Listing moderation workflow (`pending`, `approved`, `rejected`)
+- Staff listing controls (admin/moderator can remove listings from moderation dashboard)
 - Public marketplace shows only approved listings
 - Search by listing title and filter by location
 - Ranking algorithm for recommended listing order (reputation + freshness + trust signals)
@@ -61,6 +64,12 @@ admin analytics, moderation logs, and seller-buyer messaging.
 - Admin user management (verify users, manage moderator role) + moderation logs
 - Messaging on listings
 - Seller inbox with unread counts + mark-as-read flow
+- Escrow secure hold flow:
+  - buyer funds hold in-platform from a demo wallet balance
+  - seller marks shipped
+  - buyer confirms delivery before funds release
+  - dispute + admin/moderator resolution path
+- Demo wallet ledger (available vs held balance) for realistic escrow simulation
 - Offline payment alignment for first-phase scope (online payment simulation disabled by default)
 - Basic in-memory API rate limiting
 
@@ -108,6 +117,9 @@ REPORT_PENALTY=10
 # Optional: disable/enable simulated payment endpoint (default false)
 ENABLE_SIMULATED_PAYMENTS=false
 
+# Optional: escrow fee percent for secure hold flow
+ESCROW_FEE_PERCENT=2
+
 # Optional: persistent uploads directory (Render disk mount example)
 UPLOADS_DIR=/var/data/uploads
 ```
@@ -146,6 +158,7 @@ Open:
 4. Browse approved listings on home page.
 5. Report listings to trigger fraud logic and reputation penalties.
 6. Use messaging and offers between buyers and sellers.
+7. Top up buyer wallet, start Secure Hold, then complete shipped -> confirm flow.
 
 ## Security Highlights
 

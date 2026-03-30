@@ -58,6 +58,7 @@
         if (!navbar) {
             return;
         }
+        const navInner = navbar.querySelector(".nav-inner");
 
         let lastScrollY = window.scrollY || 0;
         let ticking = false;
@@ -73,8 +74,17 @@
                 window.requestAnimationFrame(() => {
                     const currentY = window.scrollY || 0;
                     const scrollingDown = currentY > lastScrollY;
+                    const isMenuOpen = !!(navInner && navInner.classList.contains("menu-open"));
 
-                    if (scrollingDown && currentY > 80) {
+                    if (currentY > 10) {
+                        navbar.classList.add("navbar-scrolled");
+                    } else {
+                        navbar.classList.remove("navbar-scrolled");
+                    }
+
+                    if (isMenuOpen) {
+                        navbar.classList.remove("navbar-hidden");
+                    } else if (scrollingDown && currentY > 80) {
                         navbar.classList.add("navbar-hidden");
                     } else {
                         navbar.classList.remove("navbar-hidden");
@@ -129,6 +139,36 @@
         }
     }
 
+    async function refreshCurrentUser() {
+        const token = getToken();
+        if (!token) {
+            return null;
+        }
+
+        const data = await apiRequest("/auth/me", {}, true);
+        state.user = data.user;
+        localStorage.setItem(USER_CACHE_KEY, JSON.stringify(data.user));
+        return data.user;
+    }
+
+    function applyWalletToCurrentUser(wallet) {
+        if (!state.user || !wallet) {
+            return;
+        }
+
+        const available = Number(wallet.available);
+        const held = Number(wallet.held);
+
+        if (Number.isFinite(available)) {
+            state.user.walletBalance = available;
+        }
+        if (Number.isFinite(held)) {
+            state.user.walletHeldBalance = held;
+        }
+
+        localStorage.setItem(USER_CACHE_KEY, JSON.stringify(state.user));
+    }
+
     function setupNavigation(page) {
         const navSearchForm = document.getElementById("navSearchForm");
         const navSearchInput = document.getElementById("navSearchInput");
@@ -177,6 +217,7 @@
         }
 
         authLinks.innerHTML = items.join("");
+        setupMobileMenu(navSearchForm, authLinks);
 
         const logoutBtn = document.getElementById("logoutBtn");
         if (logoutBtn) {
@@ -188,6 +229,71 @@
                 }, 350);
             });
         }
+    }
+
+    function setupMobileMenu(navSearchForm, authLinks) {
+        if (!authLinks) {
+            return;
+        }
+
+        const navInner = authLinks.closest(".nav-inner");
+        if (!navInner) {
+            return;
+        }
+
+        let toggle = navInner.querySelector(".nav-toggle");
+        if (!toggle) {
+            toggle = document.createElement("button");
+            toggle.type = "button";
+            toggle.className = "nav-toggle";
+            toggle.setAttribute("aria-label", "Open menu");
+            toggle.setAttribute("aria-expanded", "false");
+            toggle.innerHTML = "<span></span><span></span><span></span>";
+            navInner.insertBefore(toggle, authLinks);
+        }
+
+        const setMenuState = (isOpen) => {
+            navInner.classList.toggle("menu-open", isOpen);
+            toggle.classList.toggle("is-open", isOpen);
+            toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            toggle.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
+        };
+
+        setMenuState(false);
+
+        toggle.addEventListener("click", () => {
+            setMenuState(!navInner.classList.contains("menu-open"));
+        });
+
+        const closeMenu = () => setMenuState(false);
+
+        authLinks.addEventListener("click", (event) => {
+            if (event.target.closest("a,button")) {
+                closeMenu();
+            }
+        });
+
+        if (navSearchForm) {
+            navSearchForm.addEventListener("submit", closeMenu);
+        }
+
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                closeMenu();
+            }
+        });
+
+        window.addEventListener("resize", () => {
+            if (window.innerWidth > 960) {
+                closeMenu();
+            }
+        });
+
+        document.addEventListener("click", (event) => {
+            if (!navInner.contains(event.target)) {
+                closeMenu();
+            }
+        });
     }
 
     function showToast(message, type = "info") {
@@ -261,6 +367,20 @@
     function truncate(value, maxLength) {
         const text = String(value || "");
         return text.length > maxLength ? `${text.slice(0, maxLength - 1)}...` : text;
+    }
+
+    function isStrongPassword(password) {
+        const value = String(password || "");
+        if (value.length < 8) {
+            return false;
+        }
+        if (!/[a-z]/i.test(value)) {
+            return false;
+        }
+        if (!/\d/.test(value)) {
+            return false;
+        }
+        return true;
     }
 
     function formatCurrency(value) {
@@ -529,6 +649,10 @@
                 if (action === "offer") {
                     await sendOffer(listingId);
                 }
+
+                if (action === "start-escrow") {
+                    await startEscrow(listingId);
+                }
             } catch (error) {
                 showToast(error.message || "Action failed.", "error");
             }
@@ -693,7 +817,7 @@
             chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
         }
 
-        let actionHtml = "<p class=\"card-hint\">Login to report or contact seller. Payments are arranged offline.</p>";
+        let actionHtml = "<p class=\"card-hint\">Login to message seller or use TradeCircle Secure Hold.</p>";
 
         if (state.user && !isOwner && canTrade) {
             actionHtml = `
@@ -704,7 +828,9 @@
                     ${
                         listing.availability === "reserved"
                             ? "<span class=\"card-hint\">Reserved by another buyer.</span>"
-                            : "<span class=\"card-hint\">Arrange payment and meetup offline with the seller.</span>"
+                            : `<button type="button" class="btn btn-primary" data-action="start-escrow" data-id="${escapeHtml(
+                                  listing._id
+                              )}">Secure Hold</button>`
                     }
                 </div>
             `;
@@ -857,6 +983,51 @@
         showToast(response.message || "Offer sent to seller.", "success");
     }
 
+    async function startEscrow(listingId) {
+        if (!ensureAuthenticated()) {
+            return;
+        }
+        if (!canCurrentUserTrade()) {
+            throw new Error(
+                "Your account is pending verification. Admin/moderator approval is required before escrow."
+            );
+        }
+
+        const amountInput = window.prompt(
+            "Enter amount to hold in escrow (leave blank to use listing price):",
+            ""
+        );
+        if (amountInput === null) {
+            return;
+        }
+
+        const note = window.prompt("Optional note for seller (escrow details):", "") || "";
+        const payload = {
+            listingId,
+            note
+        };
+
+        const parsedAmount = Number(String(amountInput || "").replace(/,/g, "").trim());
+        if (String(amountInput || "").trim()) {
+            if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+                throw new Error("Escrow amount must be a valid positive number.");
+            }
+            payload.amount = parsedAmount;
+        }
+
+        const response = await apiRequest(
+            "/escrow/start",
+            {
+                method: "POST",
+                body: payload
+            },
+            true
+        );
+
+        applyWalletToCurrentUser(response.wallet);
+        showToast(response.message || "Escrow funded successfully.", "success");
+    }
+
     function initLoginPage() {
         if (state.user) {
             redirectByRole(state.user);
@@ -914,6 +1085,14 @@
             const city = String(formData.get("city") || "").trim();
             const password = String(formData.get("password") || "");
 
+            if (!isStrongPassword(password)) {
+                showToast(
+                    "Password must be at least 8 characters and include both letters and numbers.",
+                    "error"
+                );
+                return;
+            }
+
             try {
                 const data = await apiRequest("/auth/register", {
                     method: "POST",
@@ -943,6 +1122,8 @@
         const refreshBtn = document.getElementById("refreshListingsBtn");
         const sellerInbox = document.getElementById("sellerInbox");
         const inboxBadge = document.getElementById("inboxBadge");
+        const escrowDeals = document.getElementById("escrowDeals");
+        const walletTopupForm = document.getElementById("walletTopupForm");
 
         if (!profileCard || !listingForm || !myListings) {
             return;
@@ -960,6 +1141,41 @@
             );
         }
         await loadSellerInbox(sellerInbox, inboxBadge);
+        await loadEscrowDeals(escrowDeals);
+
+        if (walletTopupForm) {
+            walletTopupForm.addEventListener("submit", async (event) => {
+                event.preventDefault();
+                const amountInput = walletTopupForm.querySelector("#walletTopupAmount");
+                const amount = Number(
+                    String(amountInput ? amountInput.value : "")
+                        .replace(/,/g, "")
+                        .trim()
+                );
+
+                if (!Number.isFinite(amount) || amount <= 0) {
+                    showToast("Top up amount must be a valid positive number.", "error");
+                    return;
+                }
+
+                try {
+                    const response = await apiRequest(
+                        "/escrow/wallet/topup",
+                        {
+                            method: "POST",
+                            body: { amount }
+                        },
+                        true
+                    );
+                    applyWalletToCurrentUser(response.wallet);
+                    renderProfileCard(profileCard, state.user);
+                    walletTopupForm.reset();
+                    showToast(response.message || "Wallet topped up.", "success");
+                } catch (error) {
+                    showToast(error.message || "Unable to top up wallet.", "error");
+                }
+            });
+        }
 
         listingForm.addEventListener("submit", async (event) => {
             event.preventDefault();
@@ -1016,6 +1232,13 @@
                     await updateAvailability(listingId, "sold");
                     await loadMyListings(myListings);
                 }
+
+                if (action === "delete-listing") {
+                    await removeListing(listingId);
+                    await loadMyListings(myListings);
+                    await loadSellerInbox(sellerInbox, inboxBadge);
+                    await loadEscrowDeals(escrowDeals);
+                }
             } catch (error) {
                 showToast(error.message || "Unable to load messages.", "error");
             }
@@ -1023,8 +1246,15 @@
 
         if (refreshBtn) {
             refreshBtn.addEventListener("click", async () => {
+                try {
+                    await refreshCurrentUser();
+                    renderProfileCard(profileCard, state.user);
+                } catch {
+                    // Continue refreshing listings even if profile refresh fails.
+                }
                 await loadMyListings(myListings);
                 await loadSellerInbox(sellerInbox, inboxBadge);
+                await loadEscrowDeals(escrowDeals);
                 showToast("Listings refreshed.", "success");
             });
         }
@@ -1049,10 +1279,38 @@
             });
         }
 
+        if (escrowDeals) {
+            escrowDeals.addEventListener("click", async (event) => {
+                const button = event.target.closest("button[data-escrow-action]");
+                if (!button) {
+                    return;
+                }
+
+                const escrowId = button.dataset.id;
+                const action = button.dataset.escrowAction;
+                if (!escrowId || !action) {
+                    return;
+                }
+
+                try {
+                    await runEscrowAction(escrowId, action);
+                    await refreshCurrentUser();
+                    renderProfileCard(profileCard, state.user);
+                    await loadEscrowDeals(escrowDeals);
+                    await loadMyListings(myListings);
+                } catch (error) {
+                    showToast(error.message || "Escrow action failed.", "error");
+                }
+            });
+        }
+
         await loadMyListings(myListings);
     }
 
     function renderProfileCard(container, user) {
+        const walletAvailable = formatCurrency(Number(user.walletBalance || 0));
+        const walletHeld = formatCurrency(Number(user.walletHeldBalance || 0));
+
         container.innerHTML = `
             <div class="profile-row"><span>Name</span><strong>${escapeHtml(user.name)}</strong></div>
             <div class="profile-row"><span>Email</span><strong>${escapeHtml(user.email)}</strong></div>
@@ -1061,6 +1319,8 @@
                 user.communityVerified ? "Verified" : "Pending Verification"
             }</strong></div>
             <div class="profile-row"><span>Reputation</span><strong>${escapeHtml(String(user.reputationScore))}</strong></div>
+            <div class="profile-row"><span>Wallet Available</span><strong>${escapeHtml(walletAvailable)}</strong></div>
+            <div class="profile-row"><span>Wallet Held</span><strong>${escapeHtml(walletHeld)}</strong></div>
             <div class="profile-row"><span>Phone</span><strong>${escapeHtml(formatPhone(user.phoneNumber))}</strong></div>
             <div class="profile-row"><span>City</span><strong>${escapeHtml(user.city || "Not set")}</strong></div>
             <div class="profile-row"><span>Seller Badge</span><strong>${user.verifiedSeller ? "Verified" : "Standard"}</strong></div>
@@ -1122,6 +1382,164 @@
                 `;
             })
             .join("");
+    }
+
+    async function loadEscrowDeals(container) {
+        if (!container) {
+            return;
+        }
+
+        container.innerHTML = "<p class=\"empty-state\">Loading secure hold deals...</p>";
+
+        const data = await apiRequest("/escrow/mine", {}, true);
+        const escrows = Array.isArray(data.escrows) ? data.escrows : [];
+
+        if (!escrows.length) {
+            container.innerHTML =
+                "<p class=\"empty-state\">No escrow deals yet. Use Secure Hold on a listing to start protected trading.</p>";
+            return;
+        }
+
+        container.innerHTML = escrows
+            .map((escrow) => {
+                const listingTitle =
+                    escrow.listing && escrow.listing.title ? escrow.listing.title : "Listing";
+                const listingLocation =
+                    escrow.listing && escrow.listing.location ? escrow.listing.location : "Unknown location";
+                const status = String(escrow.status || "").toLowerCase();
+                const buyerId = escrow.buyer && (escrow.buyer._id || escrow.buyer);
+                const isBuyer = String(buyerId || "") === String(state.user && state.user._id);
+                const roleLabel = isBuyer ? "Buyer" : "Seller";
+                const buyerName = escrow.buyer && escrow.buyer.name ? escrow.buyer.name : "Buyer";
+                const sellerName = escrow.seller && escrow.seller.name ? escrow.seller.name : "Seller";
+                const counterpartLabel = isBuyer ? `Seller: ${sellerName}` : `Buyer: ${buyerName}`;
+                const amount = formatCurrency(escrow.amount || 0);
+                const fee = formatCurrency(escrow.serviceFee || 0);
+                const totalHeld = formatCurrency(escrow.totalHeld || 0);
+
+                let actions = "";
+                if (!isBuyer && status === "funded") {
+                    actions += `<button class="btn btn-secondary" type="button" data-escrow-action="ship" data-id="${escapeHtml(
+                        escrow._id
+                    )}">Mark Shipped</button>`;
+                }
+                if (isBuyer && status === "shipped") {
+                    actions += `<button class="btn btn-success" type="button" data-escrow-action="confirm" data-id="${escapeHtml(
+                        escrow._id
+                    )}">Confirm Delivery</button>`;
+                }
+                if (isBuyer && status === "funded") {
+                    actions += `<button class="btn btn-danger" type="button" data-escrow-action="cancel" data-id="${escapeHtml(
+                        escrow._id
+                    )}">Cancel & Refund</button>`;
+                }
+                if (["funded", "shipped"].includes(status)) {
+                    actions += `<button class="btn btn-secondary" type="button" data-escrow-action="dispute" data-id="${escapeHtml(
+                        escrow._id
+                    )}">Open Dispute</button>`;
+                }
+
+                return `
+                    <article class="inbox-item">
+                        <div class="inbox-top">
+                            <p class="inbox-title">${escapeHtml(listingTitle)}</p>
+                            <div class="meta-chips">
+                                <span class="chip">${escapeHtml(roleLabel)}</span>
+                                <span class="chip chip-warning">${escapeHtml(status)}</span>
+                            </div>
+                        </div>
+                        <p class="inbox-meta">${escapeHtml(listingLocation)} · Updated ${escapeHtml(
+                    formatRelativeTime(escrow.updatedAt)
+                )}</p>
+                        <div class="listing-meta">
+                            <span>${escapeHtml(counterpartLabel)}</span>
+                            <span>Status: ${escapeHtml(status)}</span>
+                        </div>
+                        <div class="listing-meta">
+                            <span>Item: ${escapeHtml(amount)}</span>
+                            <span>Fee: ${escapeHtml(fee)}</span>
+                        </div>
+                        <div class="listing-meta">
+                            <span>Total Held: ${escapeHtml(totalHeld)}</span>
+                            <span>Resolution: ${escapeHtml(escrow.resolution || "none")}</span>
+                        </div>
+                        ${actions ? `<div class="card-actions">${actions}</div>` : ""}
+                    </article>
+                `;
+            })
+            .join("");
+    }
+
+    async function runEscrowAction(escrowId, action) {
+        if (action === "ship") {
+            const response = await apiRequest(
+                `/escrow/${escrowId}/ship`,
+                {
+                    method: "PATCH"
+                },
+                true
+            );
+            showToast(response.message || "Escrow marked as shipped.", "success");
+            return;
+        }
+
+        if (action === "confirm") {
+            const proceed = window.confirm(
+                "Confirm delivery? This releases held funds to the seller and marks the deal complete."
+            );
+            if (!proceed) {
+                return;
+            }
+
+            const response = await apiRequest(
+                `/escrow/${escrowId}/confirm`,
+                {
+                    method: "PATCH"
+                },
+                true
+            );
+            applyWalletToCurrentUser(response.buyerWallet || response.sellerWallet);
+            showToast(response.message || "Funds released to seller.", "success");
+            return;
+        }
+
+        if (action === "cancel") {
+            const proceed = window.confirm("Cancel this escrow and refund the held money?");
+            if (!proceed) {
+                return;
+            }
+
+            const response = await apiRequest(
+                `/escrow/${escrowId}/cancel`,
+                {
+                    method: "PATCH"
+                },
+                true
+            );
+            applyWalletToCurrentUser(response.buyerWallet);
+            showToast(response.message || "Escrow cancelled and refunded.", "success");
+            return;
+        }
+
+        if (action === "dispute") {
+            const reason = window.prompt(
+                "Describe the problem for admin review (5+ characters):",
+                "Item not delivered as agreed."
+            );
+            if (reason === null) {
+                return;
+            }
+
+            const response = await apiRequest(
+                `/escrow/${escrowId}/dispute`,
+                {
+                    method: "PATCH",
+                    body: { reason: reason.trim() }
+                },
+                true
+            );
+            showToast(response.message || "Dispute opened.", "success");
+        }
     }
 
     async function loadMyListings(container) {
@@ -1206,6 +1624,9 @@
                 <div class="card-actions">
                     <button class="btn btn-secondary" type="button" data-action="view-messages" data-id="${escapeHtml(listing._id)}">
                         View Messages
+                    </button>
+                    <button class="btn btn-danger" type="button" data-action="delete-listing" data-id="${escapeHtml(listing._id)}">
+                        Remove Listing
                     </button>
                     ${availabilityActions}
                 </div>
@@ -1293,6 +1714,25 @@
         showToast(response.message || "Availability updated.", "success");
     }
 
+    async function removeListing(listingId) {
+        const proceed = window.confirm(
+            "Remove this listing? This action cannot be undone once completed."
+        );
+        if (!proceed) {
+            return;
+        }
+
+        const response = await apiRequest(
+            `/listings/${listingId}`,
+            {
+                method: "DELETE"
+            },
+            true
+        );
+
+        showToast(response.message || "Listing removed.", "success");
+    }
+
     async function initAdminPage() {
         if (!ensureAuthenticated()) {
             return;
@@ -1311,6 +1751,7 @@
         const statusFilter = document.getElementById("adminStatusFilter");
         const pendingListings = document.getElementById("pendingListings");
         const adminListings = document.getElementById("adminListings");
+        const escrowDisputeRows = document.getElementById("escrowDisputeRows");
         const adminUsersSection = document.getElementById("adminUsersSection");
         const adminUsersBody = document.getElementById("adminUserRows");
         const adminLogsSection = document.getElementById("adminLogsSection");
@@ -1347,14 +1788,22 @@
                 return;
             }
 
+            const adminAction = button.dataset.adminAction;
             const listingId = button.dataset.id;
             const nextStatus = button.dataset.status;
 
-            if (!listingId || !nextStatus) {
+            if (!listingId) {
                 return;
             }
 
-            await moderateListing(listingId, nextStatus);
+            if (adminAction === "status" && nextStatus) {
+                await moderateListing(listingId, nextStatus);
+            }
+
+            if (adminAction === "delete") {
+                await removeListing(listingId);
+                await refreshAdminData();
+            }
         });
 
         adminListings.addEventListener("click", async (event) => {
@@ -1363,15 +1812,46 @@
                 return;
             }
 
+            const adminAction = button.dataset.adminAction;
             const listingId = button.dataset.id;
             const nextStatus = button.dataset.status;
 
-            if (!listingId || !nextStatus) {
+            if (!listingId) {
                 return;
             }
 
-            await moderateListing(listingId, nextStatus);
+            if (adminAction === "status" && nextStatus) {
+                await moderateListing(listingId, nextStatus);
+            }
+
+            if (adminAction === "delete") {
+                await removeListing(listingId);
+                await refreshAdminData();
+            }
         });
+
+        if (escrowDisputeRows) {
+            escrowDisputeRows.addEventListener("click", async (event) => {
+                const button = event.target.closest("button[data-escrow-admin-action]");
+                if (!button) {
+                    return;
+                }
+
+                const escrowId = button.dataset.id;
+                const resolution = button.dataset.resolution;
+                if (!escrowId || !resolution) {
+                    return;
+                }
+
+                try {
+                    await resolveEscrowDispute(escrowId, resolution);
+                    await loadEscrowDisputes();
+                    await refreshAdminData();
+                } catch (error) {
+                    showToast(error.message || "Escrow resolution failed.", "error");
+                }
+            });
+        }
 
         if (isAdmin && adminUsersBody) {
             adminUsersBody.addEventListener("click", async (event) => {
@@ -1414,7 +1894,8 @@
             loadAnalytics(),
             loadPendingListings(),
             loadAdminListings((document.getElementById("adminStatusFilter") || {}).value || ""),
-            loadReports()
+            loadReports(),
+            loadEscrowDisputes()
         ];
 
         if (state.user && state.user.role === "admin") {
@@ -1441,6 +1922,12 @@
             )}</p></article>
             <article class="metric"><h3>Total Listings</h3><p>${escapeHtml(String(data.totalListings || 0))}</p></article>
             <article class="metric"><h3>Total Reports</h3><p>${escapeHtml(String(data.totalReports || 0))}</p></article>
+            <article class="metric"><h3>Total Escrows</h3><p>${escapeHtml(String(data.totalEscrows || 0))}</p></article>
+            <article class="metric"><h3>Escrow Disputes</h3><p>${escapeHtml(String(data.disputedEscrows || 0))}</p></article>
+            <article class="metric"><h3>Escrow Released</h3><p>${escapeHtml(String(data.releasedEscrows || 0))}</p></article>
+            <article class="metric"><h3>Escrow Held</h3><p>${escapeHtml(
+                formatCurrency(data.activeEscrowHeld || 0)
+            )}</p></article>
             <article class="metric"><h3>Pending</h3><p>${escapeHtml(String(data.pendingListings || 0))}</p></article>
             <article class="metric"><h3>Approved</h3><p>${escapeHtml(String(data.approvedListings || 0))}</p></article>
             <article class="metric"><h3>Rejected</h3><p>${escapeHtml(String(data.rejectedListings || 0))}</p></article>
@@ -1549,6 +2036,81 @@
             .join("");
     }
 
+    async function loadEscrowDisputes() {
+        const tableBody = document.getElementById("escrowDisputeRows");
+        if (!tableBody) {
+            return;
+        }
+
+        tableBody.innerHTML = "<tr><td colspan=\"7\">Loading escrow disputes...</td></tr>";
+
+        const data = await apiRequest("/escrow/admin/disputes", {}, true);
+        const escrows = Array.isArray(data.escrows) ? data.escrows : [];
+
+        if (!escrows.length) {
+            tableBody.innerHTML = "<tr><td colspan=\"7\">No escrow disputes at the moment.</td></tr>";
+            return;
+        }
+
+        tableBody.innerHTML = escrows
+            .map((escrow) => {
+                const listingTitle =
+                    escrow.listing && escrow.listing.title ? escrow.listing.title : "Unknown listing";
+                const buyerName = escrow.buyer && escrow.buyer.name ? escrow.buyer.name : "Unknown buyer";
+                const sellerName = escrow.seller && escrow.seller.name ? escrow.seller.name : "Unknown seller";
+                const reason = escrow.disputeReason || "No reason provided";
+
+                return `
+                    <tr>
+                        <td>${escapeHtml(formatDate(escrow.updatedAt || escrow.createdAt))}</td>
+                        <td>${escapeHtml(listingTitle)}</td>
+                        <td>${escapeHtml(buyerName)}</td>
+                        <td>${escapeHtml(sellerName)}</td>
+                        <td>${escapeHtml(formatCurrency(escrow.totalHeld || 0))}</td>
+                        <td>${escapeHtml(truncate(reason, 140))}</td>
+                        <td class="table-actions">
+                            <button class="btn btn-success" data-escrow-admin-action="resolve" data-resolution="release_to_seller" data-id="${escapeHtml(
+                                escrow._id
+                            )}">Release to Seller</button>
+                            <button class="btn btn-danger" data-escrow-admin-action="resolve" data-resolution="refund_to_buyer" data-id="${escapeHtml(
+                                escrow._id
+                            )}">Refund Buyer</button>
+                        </td>
+                    </tr>
+                `;
+            })
+            .join("");
+    }
+
+    async function resolveEscrowDispute(escrowId, resolution) {
+        let note = "";
+        if (resolution === "release_to_seller") {
+            note = window.prompt(
+                "Optional moderation note for releasing funds to seller:",
+                "Item evidence reviewed. Funds released."
+            );
+        } else {
+            note = window.prompt(
+                "Optional moderation note for refunding buyer:",
+                "Dispute evidence reviewed. Buyer refunded."
+            );
+        }
+
+        const response = await apiRequest(
+            `/escrow/${escrowId}/resolve`,
+            {
+                method: "PATCH",
+                body: {
+                    resolution,
+                    note: note || ""
+                }
+            },
+            true
+        );
+
+        showToast(response.message || "Escrow dispute resolved.", "success");
+    }
+
     async function loadAdminUsers() {
         const tableBody = document.getElementById("adminUserRows");
         if (!tableBody || !state.user || state.user.role !== "admin") {
@@ -1592,7 +2154,9 @@
                         <td>${escapeHtml(user.email || "-")}</td>
                         <td>${escapeHtml(user.role || "user")}</td>
                         <td>${user.communityVerified ? "Yes" : "No"}</td>
-                        <td>${escapeHtml(String(user.reputationScore || 0))}</td>
+                        <td>${escapeHtml(String(user.reputationScore || 0))}<br><span class="muted">A: ${escapeHtml(
+                    formatCurrency(user.walletBalance || 0)
+                )} | H: ${escapeHtml(formatCurrency(user.walletHeldBalance || 0))}</span></td>
                         <td>${escapeHtml(formatDate(user.lastSeenAt || user.createdAt))}</td>
                         <td class="table-actions">${verifyAction} ${roleActions}</td>
                     </tr>
@@ -1691,31 +2255,32 @@
             chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
         }
 
-        let actions = "";
+        let moderationButtons = "";
         if (listing.status === "pending") {
-            actions = `
-                <div class="card-actions">
-                    <button type="button" class="btn btn-success" data-admin-action="status" data-status="approved" data-id="${escapeHtml(listing._id)}">Approve</button>
-                    <button type="button" class="btn btn-danger" data-admin-action="status" data-status="rejected" data-id="${escapeHtml(listing._id)}">Reject</button>
-                </div>
+            moderationButtons = `
+                <button type="button" class="btn btn-success" data-admin-action="status" data-status="approved" data-id="${escapeHtml(listing._id)}">Approve</button>
+                <button type="button" class="btn btn-danger" data-admin-action="status" data-status="rejected" data-id="${escapeHtml(listing._id)}">Reject</button>
             `;
         }
 
         if (listing.status === "approved") {
-            actions = `
-                <div class="card-actions">
-                    <button type="button" class="btn btn-danger" data-admin-action="status" data-status="rejected" data-id="${escapeHtml(listing._id)}">Reject</button>
-                </div>
+            moderationButtons = `
+                <button type="button" class="btn btn-danger" data-admin-action="status" data-status="rejected" data-id="${escapeHtml(listing._id)}">Reject</button>
             `;
         }
 
         if (listing.status === "rejected") {
-            actions = `
-                <div class="card-actions">
-                    <button type="button" class="btn btn-success" data-admin-action="status" data-status="approved" data-id="${escapeHtml(listing._id)}">Approve</button>
-                </div>
+            moderationButtons = `
+                <button type="button" class="btn btn-success" data-admin-action="status" data-status="approved" data-id="${escapeHtml(listing._id)}">Approve</button>
             `;
         }
+
+        const actions = `
+            <div class="card-actions">
+                ${moderationButtons}
+                <button type="button" class="btn btn-danger" data-admin-action="delete" data-id="${escapeHtml(listing._id)}">Remove Listing</button>
+            </div>
+        `;
 
         const imageHtml = listing.image
             ? `<img class=\"listing-image\" src=\"${escapeHtml(listing.image)}\" alt=\"${escapeHtml(listing.title)}\">`

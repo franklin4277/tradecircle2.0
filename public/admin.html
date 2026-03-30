@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard | TradeCircle</title>
+    <title>Staff Dashboard | TradeCircle</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body data-page="admin">
@@ -27,10 +27,13 @@
         <section class="panel">
             <div class="panel-head row-between">
                 <div>
-                    <h1>Admin Analytics</h1>
-                    <p>Marketplace overview and moderation queue.</p>
+                    <h1>Staff Analytics</h1>
+                    <p>Marketplace overview and moderation queue for admins and moderators.</p>
                 </div>
-                <button id="refreshAdminBtn" type="button" class="btn btn-secondary">Refresh Data</button>
+                <div class="card-actions">
+                    <a href="dashboard.html#create-listing" class="btn btn-primary">Add Listing</a>
+                    <button id="refreshAdminBtn" type="button" class="btn btn-secondary">Refresh Data</button>
+                </div>
             </div>
 
             <div id="analyticsCards" class="analytics-grid"></div>
@@ -78,6 +81,30 @@
                         </tr>
                     </thead>
                     <tbody id="reportRows"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>Escrow Disputes</h2>
+                <p>Resolve buyer-seller escrow conflicts to prevent scams.</p>
+            </div>
+
+            <div class="report-wrap">
+                <table class="report-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Listing</th>
+                            <th>Buyer</th>
+                            <th>Seller</th>
+                            <th>Total Held</th>
+                            <th>Reason</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="escrowDisputeRows"></tbody>
                 </table>
             </div>
         </section>

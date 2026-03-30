@@ -5,6 +5,7 @@ const fs = require("fs");
 const mongoose = require("mongoose");
 const Listing = require("../models/listing");
 const Report = require("../models/report");
+const Escrow = require("../models/escrow");
 const { auth, requireCommunityVerified } = require("../middleware/auth");
 const { adjustReputation } = require("../utils/reputation");
 const { resolveUploadsDir } = require("../config/storage");
@@ -51,6 +52,7 @@ const VALID_CATEGORIES = [
 ];
 const VALID_CONDITIONS = ["Brand New", "Like New", "Used - Good", "Used - Fair", "Refurbished"];
 const VALID_AVAILABILITY = ["available", "reserved", "sold"];
+const ACTIVE_ESCROW_STATUSES = ["funded", "shipped", "disputed"];
 const REPORT_THRESHOLD = Number(process.env.REPORT_THRESHOLD || 3);
 const REPORT_PENALTY = Number(process.env.REPORT_PENALTY || 10);
 const PAYMENTS_ENABLED =
@@ -122,6 +124,32 @@ function normalizeMessageSenderId(message) {
         return "";
     }
     return String(message.sender._id || message.sender);
+}
+
+function isStaffUser(user) {
+    const role = String(user && user.role ? user.role : "").toLowerCase();
+    return role === "admin" || role === "moderator";
+}
+
+async function removeListingImageIfExists(imagePath) {
+    const raw = String(imagePath || "").trim();
+    if (!raw) {
+        return;
+    }
+
+    const fileName = path.basename(raw);
+    if (!fileName) {
+        return;
+    }
+
+    const absolutePath = path.join(uploadsDir, fileName);
+    try {
+        await fs.promises.unlink(absolutePath);
+    } catch (error) {
+        if (!error || error.code !== "ENOENT") {
+            throw error;
+        }
+    }
 }
 
 router.get("/meta", async (req, res, next) => {
@@ -457,6 +485,53 @@ router.get("/:id", async (req, res, next) => {
         await listing.save();
 
         return res.json({ listing });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.delete("/:id", auth, async (req, res, next) => {
+    try {
+        const listingId = String(req.params.id || "").trim();
+        if (!isValidObjectId(listingId)) {
+            return res.status(400).json({ message: "Invalid listing ID." });
+        }
+
+        const listing = await Listing.findById(listingId).select(
+            "seller owner image availability status"
+        );
+        if (!listing) {
+            return res.status(404).json({ message: "Listing not found." });
+        }
+        ensureListingSeller(listing);
+
+        const sellerId = getListingSellerId(listing);
+        const isStaff = isStaffUser(req.user);
+        const isOwner = sellerId === req.user.id;
+
+        if (!isStaff && !isOwner) {
+            return res.status(403).json({
+                message: "Only the seller, admin, or moderator can remove this listing."
+            });
+        }
+
+        const activeEscrows = await Escrow.countDocuments({
+            listing: listing._id,
+            status: { $in: ACTIVE_ESCROW_STATUSES }
+        });
+        if (activeEscrows > 0) {
+            return res.status(409).json({
+                message: "Listing cannot be removed while an active escrow deal exists."
+            });
+        }
+
+        await Promise.all([
+            Listing.findByIdAndDelete(listing._id),
+            Report.deleteMany({ listing: listing._id })
+        ]);
+        await removeListingImageIfExists(listing.image);
+
+        return res.json({ message: "Listing removed successfully." });
     } catch (error) {
         return next(error);
     }

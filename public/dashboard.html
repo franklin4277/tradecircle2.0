@@ -31,12 +31,31 @@
             </div>
 
             <div id="profileCard" class="profile-card"></div>
+
+            <form id="walletTopupForm" class="form-stack wallet-topup-form">
+                <label>
+                    Add Wallet Balance (Demo)
+                    <input
+                        type="number"
+                        id="walletTopupAmount"
+                        name="amount"
+                        required
+                        min="1"
+                        step="0.01"
+                        placeholder="1000"
+                    >
+                </label>
+                <button type="submit" class="btn btn-secondary">Top Up Wallet</button>
+                <p class="card-hint">
+                    Demo wallet used for Secure Hold simulation. No real money is charged.
+                </p>
+            </form>
         </section>
 
-        <section class="panel">
+        <section id="create-listing" class="panel">
             <div class="panel-head">
                 <h2>Create Listing</h2>
-                <p>Listings are reviewed by admins before publication.</p>
+                <p>Listings are reviewed by staff (admin/moderator) before publication.</p>
             </div>
 
             <form id="listingForm" class="form-stack" enctype="multipart/form-data">
@@ -140,6 +159,16 @@
                 <span id="inboxBadge" class="badge badge-pending">Unread: 0</span>
             </div>
             <div id="sellerInbox" class="inbox-list"></div>
+        </section>
+
+        <section class="panel dashboard-wide">
+            <div class="panel-head row-between">
+                <div>
+                    <h2>Secure Hold Deals</h2>
+                    <p>Funds are held by TradeCircle until delivery is confirmed.</p>
+                </div>
+            </div>
+            <div id="escrowDeals" class="inbox-list"></div>
         </section>
 
         <section class="panel dashboard-wide">

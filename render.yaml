@@ -19,6 +19,8 @@ services:
         value: /var/data/uploads
       - key: ENABLE_SIMULATED_PAYMENTS
         value: false
+      - key: ESCROW_FEE_PERCENT
+        value: 2
       - key: ALLOW_ADMIN_REGISTRATION
         value: false
       - key: ALLOW_ADMIN_PROMOTION

@@ -59,6 +59,16 @@ const userSchema = new mongoose.Schema(
             min: 0,
             max: 1000
         },
+        walletBalance: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
+        walletHeldBalance: {
+            type: Number,
+            default: 0,
+            min: 0
+        },
         lastSeenAt: {
             type: Date,
             default: Date.now
