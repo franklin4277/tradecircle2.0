@@ -202,10 +202,38 @@ img {
     flex-wrap: wrap;
 }
 
-.filter-row {
+.filter-grid {
     display: grid;
-    grid-template-columns: 1.2fr 1fr auto;
+    grid-template-columns: repeat(4, minmax(140px, 1fr));
     gap: 0.6rem;
+}
+
+.form-grid-two {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.72rem;
+}
+
+.checkbox-grid {
+    gap: 0.45rem;
+}
+
+.check-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #1d3f70;
+}
+
+.check-row input {
+    width: auto;
+}
+
+.form-stack label.check-row {
+    display: flex;
+    gap: 0.5rem;
 }
 
 input,
@@ -378,6 +406,39 @@ select:focus {
     flex-wrap: wrap;
     font-size: 0.82rem;
     color: var(--muted);
+}
+
+.meta-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+}
+
+.chip {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    color: #29528a;
+    background: #f4f8ff;
+}
+
+.chip-verified {
+    background: #e9fff2;
+    border-color: #b7ecd0;
+    color: #137246;
+}
+
+.chip-warning {
+    background: #fff6dc;
+    border-color: #f2dd9f;
+    color: #916000;
+}
+
+.chip-sold {
+    background: #e8edf6;
+    border-color: #c8d4e8;
+    color: #3e587f;
 }
 
 .badge {
@@ -621,7 +682,7 @@ select:focus {
         justify-content: flex-start;
     }
 
-    .filter-row {
+    .filter-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -645,5 +706,9 @@ select:focus {
 
     .panel {
         padding: 0.82rem;
+    }
+
+    .form-grid-two {
+        grid-template-columns: 1fr;
     }
 }

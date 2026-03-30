@@ -39,15 +39,29 @@
         <section id="marketplace" class="panel">
             <div class="panel-head">
                 <h2>Marketplace</h2>
-                <p>Search by title and filter by location.</p>
+                <p>Use realistic filters like category, condition, price range, and sort order.</p>
             </div>
 
-            <form id="listingFilterForm" class="filter-row" autocomplete="off">
-                <input id="searchInput" type="search" placeholder="Search by title...">
+            <form id="listingFilterForm" class="filter-grid" autocomplete="off">
+                <input id="searchInput" type="search" placeholder="Search by title or keyword...">
                 <select id="locationFilter">
                     <option value="">All Locations</option>
                 </select>
-                <button type="submit" class="btn btn-primary">Apply</button>
+                <select id="categoryFilter">
+                    <option value="">All Categories</option>
+                </select>
+                <select id="conditionFilter">
+                    <option value="">Any Condition</option>
+                </select>
+                <input id="minPriceFilter" type="number" min="0" step="0.01" placeholder="Min price">
+                <input id="maxPriceFilter" type="number" min="0" step="0.01" placeholder="Max price">
+                <select id="sortFilter">
+                    <option value="newest">Newest First</option>
+                    <option value="most_viewed">Most Viewed</option>
+                    <option value="price_low_high">Price: Low to High</option>
+                    <option value="price_high_low">Price: High to Low</option>
+                </select>
+                <button type="submit" class="btn btn-primary">Apply Filters</button>
             </form>
         </section>
 

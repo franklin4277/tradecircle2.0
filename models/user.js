@@ -22,16 +22,36 @@ const userSchema = new mongoose.Schema(
             required: true,
             minlength: 6
         },
+        phoneNumber: {
+            type: String,
+            trim: true,
+            maxlength: 24,
+            default: ""
+        },
+        city: {
+            type: String,
+            trim: true,
+            maxlength: 80,
+            default: ""
+        },
         role: {
             type: String,
             enum: ["user", "admin"],
             default: "user"
+        },
+        verifiedSeller: {
+            type: Boolean,
+            default: false
         },
         reputationScore: {
             type: Number,
             default: 100,
             min: 0,
             max: 1000
+        },
+        lastSeenAt: {
+            type: Date,
+            default: Date.now
         }
     },
     { timestamps: true }

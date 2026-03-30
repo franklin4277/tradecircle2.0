@@ -3,9 +3,22 @@
     const API_BASE = "/api";
     const TOKEN_KEY = "tradecircle_token";
     const USER_CACHE_KEY = "tradecircle_user_cache";
+    const FALLBACK_CATEGORIES = [
+        "Electronics",
+        "Vehicles",
+        "Property",
+        "Home & Furniture",
+        "Fashion",
+        "Jobs",
+        "Services",
+        "Agriculture",
+        "Other"
+    ];
+    const FALLBACK_CONDITIONS = ["Brand New", "Like New", "Used - Good", "Used - Fair", "Refurbished"];
     const state = {
         user: null,
-        toastTimer: null
+        toastTimer: null,
+        meta: null
     };
 
     document.addEventListener("DOMContentLoaded", async () => {
@@ -239,6 +252,48 @@
         }
     }
 
+    function formatRelativeTime(value) {
+        if (!value) {
+            return "recently";
+        }
+
+        const timestamp = new Date(value).getTime();
+        if (Number.isNaN(timestamp)) {
+            return "recently";
+        }
+
+        const elapsed = Date.now() - timestamp;
+        const minutes = Math.floor(elapsed / (1000 * 60));
+        if (minutes < 1) {
+            return "just now";
+        }
+        if (minutes < 60) {
+            return `${minutes} min ago`;
+        }
+
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) {
+            return `${hours} hr ago`;
+        }
+
+        const days = Math.floor(hours / 24);
+        if (days < 30) {
+            return `${days} day${days === 1 ? "" : "s"} ago`;
+        }
+
+        const months = Math.floor(days / 30);
+        return `${months} month${months === 1 ? "" : "s"} ago`;
+    }
+
+    function formatPhone(value) {
+        const trimmed = String(value || "").trim();
+        if (!trimmed) {
+            return "Not provided";
+        }
+
+        return trimmed;
+    }
+
     function getStatusClass(status) {
         if (status === "approved") {
             return "badge-approved";
@@ -303,10 +358,25 @@
     async function initIndexPage() {
         const searchInput = document.getElementById("searchInput");
         const locationFilter = document.getElementById("locationFilter");
+        const categoryFilter = document.getElementById("categoryFilter");
+        const conditionFilter = document.getElementById("conditionFilter");
+        const minPriceFilter = document.getElementById("minPriceFilter");
+        const maxPriceFilter = document.getElementById("maxPriceFilter");
+        const sortFilter = document.getElementById("sortFilter");
         const listingFilterForm = document.getElementById("listingFilterForm");
         const listingGrid = document.getElementById("listingGrid");
 
-        if (!searchInput || !locationFilter || !listingFilterForm || !listingGrid) {
+        if (
+            !searchInput ||
+            !locationFilter ||
+            !categoryFilter ||
+            !conditionFilter ||
+            !minPriceFilter ||
+            !maxPriceFilter ||
+            !sortFilter ||
+            !listingFilterForm ||
+            !listingGrid
+        ) {
             return;
         }
 
@@ -315,15 +385,54 @@
             searchInput.value = params.get("search");
         }
 
-        await loadLocations(locationFilter);
+        if (params.get("location")) {
+            locationFilter.value = params.get("location");
+        }
+
+        if (params.get("category")) {
+            categoryFilter.value = params.get("category");
+        }
+
+        if (params.get("condition")) {
+            conditionFilter.value = params.get("condition");
+        }
+
+        if (params.get("minPrice")) {
+            minPriceFilter.value = params.get("minPrice");
+        }
+
+        if (params.get("maxPrice")) {
+            maxPriceFilter.value = params.get("maxPrice");
+        }
+
+        if (params.get("sort")) {
+            sortFilter.value = params.get("sort");
+        }
+
+        await loadMarketplaceMeta({
+            locationFilter,
+            categoryFilter,
+            conditionFilter
+        });
 
         if (params.get("location")) {
             locationFilter.value = params.get("location");
+        }
+        if (params.get("category")) {
+            categoryFilter.value = params.get("category");
+        }
+        if (params.get("condition")) {
+            conditionFilter.value = params.get("condition");
         }
 
         await fetchAndRenderListings({
             searchInput,
             locationFilter,
+            categoryFilter,
+            conditionFilter,
+            minPriceFilter,
+            maxPriceFilter,
+            sortFilter,
             listingGrid,
             syncUrl: false
         });
@@ -333,6 +442,11 @@
             await fetchAndRenderListings({
                 searchInput,
                 locationFilter,
+                categoryFilter,
+                conditionFilter,
+                minPriceFilter,
+                maxPriceFilter,
+                sortFilter,
                 listingGrid,
                 syncUrl: true
             });
@@ -360,6 +474,10 @@
                     await sendMessage(listingId);
                 }
 
+                if (action === "offer") {
+                    await sendOffer(listingId);
+                }
+
                 if (action === "pay") {
                     await simulatePayment(listingId);
                 }
@@ -369,26 +487,65 @@
         });
     }
 
-    async function loadLocations(selectElement) {
+    async function loadMarketplaceMeta({ locationFilter, categoryFilter, conditionFilter }) {
+        let data = null;
         try {
-            const data = await apiRequest("/listings/locations");
-            const locations = Array.isArray(data.locations) ? data.locations : [];
-
-            for (const location of locations) {
-                const option = document.createElement("option");
-                option.value = location;
-                option.textContent = location;
-                selectElement.appendChild(option);
-            }
+            data = await apiRequest("/listings/meta");
         } catch {
-            // Keep UI usable even if location loading fails.
+            // Keep UI usable even if meta loading fails.
+        }
+
+        const categories = Array.isArray(data && data.categories) ? data.categories : FALLBACK_CATEGORIES;
+        const conditions = Array.isArray(data && data.conditions) ? data.conditions : FALLBACK_CONDITIONS;
+        const locations = Array.isArray(data && data.locations) ? data.locations : [];
+
+        state.meta = {
+            categories,
+            conditions,
+            locations
+        };
+
+        for (const location of locations) {
+            const option = document.createElement("option");
+            option.value = location;
+            option.textContent = location;
+            locationFilter.appendChild(option);
+        }
+
+        for (const category of categories) {
+            const option = document.createElement("option");
+            option.value = category;
+            option.textContent = category;
+            categoryFilter.appendChild(option);
+        }
+
+        for (const condition of conditions) {
+            const option = document.createElement("option");
+            option.value = condition;
+            option.textContent = condition;
+            conditionFilter.appendChild(option);
         }
     }
 
-    async function fetchAndRenderListings({ searchInput, locationFilter, listingGrid, syncUrl }) {
+    async function fetchAndRenderListings({
+        searchInput,
+        locationFilter,
+        categoryFilter,
+        conditionFilter,
+        minPriceFilter,
+        maxPriceFilter,
+        sortFilter,
+        listingGrid,
+        syncUrl
+    }) {
         const params = new URLSearchParams();
         const search = searchInput.value.trim();
         const location = locationFilter.value.trim();
+        const category = categoryFilter.value.trim();
+        const condition = conditionFilter.value.trim();
+        const minPrice = minPriceFilter.value.trim();
+        const maxPrice = maxPriceFilter.value.trim();
+        const sort = sortFilter.value.trim();
 
         if (search) {
             params.set("search", search);
@@ -396,6 +553,26 @@
 
         if (location) {
             params.set("location", location);
+        }
+
+        if (category) {
+            params.set("category", category);
+        }
+
+        if (condition) {
+            params.set("condition", condition);
+        }
+
+        if (minPrice) {
+            params.set("minPrice", minPrice);
+        }
+
+        if (maxPrice) {
+            params.set("maxPrice", maxPrice);
+        }
+
+        if (sort) {
+            params.set("sort", sort);
         }
 
         if (syncUrl) {
@@ -441,6 +618,27 @@
 
         const sellerId = listing.seller && (listing.seller._id || listing.seller);
         const isOwner = !!(state.user && sellerId && String(sellerId) === String(state.user._id));
+        const sellerVerified = !!(listing.seller && listing.seller.verifiedSeller);
+
+        const chips = [
+            `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
+            `<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`
+        ];
+        if (listing.negotiable) {
+            chips.push("<span class=\"chip\">Negotiable</span>");
+        }
+        if (listing.deliveryAvailable) {
+            chips.push("<span class=\"chip\">Delivery</span>");
+        }
+        if (listing.availability === "reserved") {
+            chips.push("<span class=\"chip chip-warning\">Reserved</span>");
+        }
+        if (listing.availability === "sold") {
+            chips.push("<span class=\"chip chip-sold\">Sold</span>");
+        }
+        if (sellerVerified) {
+            chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
+        }
 
         let actionHtml = "<p class=\"card-hint\">Login to report, message seller, or pay securely.</p>";
 
@@ -448,8 +646,15 @@
             actionHtml = `
                 <div class="card-actions">
                     <button type="button" class="btn btn-secondary" data-action="message" data-id="${escapeHtml(listing._id)}">Message</button>
+                    <button type="button" class="btn btn-secondary" data-action="offer" data-id="${escapeHtml(listing._id)}">Make Offer</button>
                     <button type="button" class="btn btn-secondary" data-action="report" data-id="${escapeHtml(listing._id)}">Report</button>
-                    <button type="button" class="btn btn-primary" data-action="pay" data-id="${escapeHtml(listing._id)}">Pay (M-Pesa)</button>
+                    ${
+                        listing.availability === "reserved"
+                            ? "<span class=\"card-hint\">Reserved by another buyer.</span>"
+                            : `<button type="button" class="btn btn-primary" data-action="pay" data-id="${escapeHtml(
+                                  listing._id
+                              )}">Pay (M-Pesa)</button>`
+                    }
                 </div>
             `;
         }
@@ -469,13 +674,18 @@
                 <h3 class="listing-title">${escapeHtml(listing.title)}</h3>
                 <p class="listing-price">${formatCurrency(listing.price)}</p>
                 <p class="listing-description">${escapeHtml(truncate(listing.description, 140))}</p>
+                <div class="meta-chips">${chips.join("")}</div>
                 <div class="listing-meta">
                     <span>${escapeHtml(listing.location)}</span>
-                    <span>${formatDate(listing.createdAt)}</span>
+                    <span>${formatRelativeTime(listing.createdAt)}</span>
                 </div>
                 <div class="listing-meta">
                     <span>Seller: ${escapeHtml(sellerName)}</span>
                     <span>Rep: ${escapeHtml(String(sellerRep))}</span>
+                </div>
+                <div class="listing-meta">
+                    <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>
+                    <span>Views: ${escapeHtml(String(listing.viewsCount || 0))}</span>
                 </div>
                 ${actionHtml}
             </div>
@@ -512,6 +722,11 @@
             true
         );
 
+        if (response.movedToPendingReview) {
+            showToast("Report submitted. Listing moved to pending review.", "success");
+            return;
+        }
+
         showToast(response.message || "Report sent.", "success");
     }
 
@@ -543,6 +758,34 @@
         showToast(response.message || "Message sent.", "success");
     }
 
+    async function sendOffer(listingId) {
+        if (!ensureAuthenticated()) {
+            return;
+        }
+
+        const offerInput = window.prompt("Enter your offer amount in KES:", "25000");
+        if (offerInput === null) {
+            return;
+        }
+
+        const offerAmount = Number(String(offerInput).replace(/,/g, "").trim());
+        if (Number.isNaN(offerAmount) || offerAmount <= 0) {
+            throw new Error("Offer amount must be a valid positive number.");
+        }
+
+        const message = window.prompt("Optional offer note for seller:", "Ready to buy today.") || "";
+        const response = await apiRequest(
+            `/listings/${listingId}/messages`,
+            {
+                method: "POST",
+                body: { message, offerAmount }
+            },
+            true
+        );
+
+        showToast(response.message || "Offer sent to seller.", "success");
+    }
+
     async function simulatePayment(listingId) {
         if (!ensureAuthenticated()) {
             return;
@@ -562,9 +805,27 @@
         );
 
         const payment = response.payment || {};
+        if (payment.status === "success") {
+            showToast(
+                `Payment success: ${payment.transactionId || "Transaction created"} (${formatCurrency(
+                    payment.totalCharged || payment.amount
+                )})`,
+                "success"
+            );
+            return;
+        }
+
+        if (payment.status === "pending") {
+            showToast(
+                `Payment pending: ${payment.transactionId || "Request submitted"}.`,
+                "info"
+            );
+            return;
+        }
+
         showToast(
-            `Payment success: ${payment.transactionId || "Transaction created"}`,
-            "success"
+            `Payment failed: ${payment.transactionId || "Try again later"}.`,
+            "error"
         );
     }
 
@@ -621,13 +882,15 @@
             const formData = new FormData(registerForm);
             const name = String(formData.get("name") || "").trim();
             const email = String(formData.get("email") || "").trim();
+            const phoneNumber = String(formData.get("phoneNumber") || "").trim();
+            const city = String(formData.get("city") || "").trim();
             const password = String(formData.get("password") || "");
             const adminSecret = String(formData.get("adminSecret") || "").trim();
 
             try {
                 const data = await apiRequest("/auth/register", {
                     method: "POST",
-                    body: { name, email, password, adminSecret }
+                    body: { name, email, phoneNumber, city, password, adminSecret }
                 });
 
                 setSession(data.token, data.user);
@@ -682,18 +945,36 @@
         });
 
         myListings.addEventListener("click", async (event) => {
-            const button = event.target.closest("button[data-action='view-messages']");
+            const button = event.target.closest("button[data-action]");
             if (!button) {
                 return;
             }
 
             const listingId = button.dataset.id;
+            const action = button.dataset.action;
             if (!listingId) {
                 return;
             }
 
             try {
-                await loadListingMessages(listingId);
+                if (action === "view-messages") {
+                    await loadListingMessages(listingId);
+                }
+
+                if (action === "mark-available") {
+                    await updateAvailability(listingId, "available");
+                    await loadMyListings(myListings);
+                }
+
+                if (action === "mark-reserved") {
+                    await updateAvailability(listingId, "reserved");
+                    await loadMyListings(myListings);
+                }
+
+                if (action === "mark-sold") {
+                    await updateAvailability(listingId, "sold");
+                    await loadMyListings(myListings);
+                }
             } catch (error) {
                 showToast(error.message || "Unable to load messages.", "error");
             }
@@ -715,6 +996,9 @@
             <div class="profile-row"><span>Email</span><strong>${escapeHtml(user.email)}</strong></div>
             <div class="profile-row"><span>Role</span><strong>${escapeHtml(user.role)}</strong></div>
             <div class="profile-row"><span>Reputation</span><strong>${escapeHtml(String(user.reputationScore))}</strong></div>
+            <div class="profile-row"><span>Phone</span><strong>${escapeHtml(formatPhone(user.phoneNumber))}</strong></div>
+            <div class="profile-row"><span>City</span><strong>${escapeHtml(user.city || "Not set")}</strong></div>
+            <div class="profile-row"><span>Seller Badge</span><strong>${user.verifiedSeller ? "Verified" : "Standard"}</strong></div>
         `;
     }
 
@@ -749,6 +1033,33 @@
             : "<div class=\"listing-image\"></div>";
 
         const messageCount = Array.isArray(listing.messages) ? listing.messages.length : 0;
+        const chips = [
+            `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
+            `<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`
+        ];
+        if (listing.negotiable) {
+            chips.push("<span class=\"chip\">Negotiable</span>");
+        }
+        if (listing.deliveryAvailable) {
+            chips.push("<span class=\"chip\">Delivery</span>");
+        }
+        if (listing.availability === "reserved") {
+            chips.push("<span class=\"chip chip-warning\">Reserved</span>");
+        }
+        if (listing.availability === "sold") {
+            chips.push("<span class=\"chip chip-sold\">Sold</span>");
+        }
+
+        let availabilityActions = "";
+        if (listing.availability !== "available") {
+            availabilityActions += `<button class="btn btn-secondary" type="button" data-action="mark-available" data-id="${escapeHtml(listing._id)}">Mark Available</button>`;
+        }
+        if (listing.availability !== "reserved") {
+            availabilityActions += `<button class="btn btn-secondary" type="button" data-action="mark-reserved" data-id="${escapeHtml(listing._id)}">Mark Reserved</button>`;
+        }
+        if (listing.availability !== "sold") {
+            availabilityActions += `<button class="btn btn-success" type="button" data-action="mark-sold" data-id="${escapeHtml(listing._id)}">Mark Sold</button>`;
+        }
 
         card.innerHTML = `
             ${imageHtml}
@@ -757,18 +1068,24 @@
                 <h3 class="listing-title">${escapeHtml(listing.title)}</h3>
                 <p class="listing-price">${formatCurrency(listing.price)}</p>
                 <p class="listing-description">${escapeHtml(truncate(listing.description, 130))}</p>
+                <div class="meta-chips">${chips.join("")}</div>
                 <div class="listing-meta">
                     <span>${escapeHtml(listing.location)}</span>
-                    <span>${formatDate(listing.createdAt)}</span>
+                    <span>${formatRelativeTime(listing.createdAt)}</span>
                 </div>
                 <div class="listing-meta">
                     <span>Reports: ${escapeHtml(String(listing.reportsCount || 0))}</span>
                     <span>Messages: ${escapeHtml(String(messageCount))}</span>
                 </div>
+                <div class="listing-meta">
+                    <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>
+                    <span>Views: ${escapeHtml(String(listing.viewsCount || 0))}</span>
+                </div>
                 <div class="card-actions">
                     <button class="btn btn-secondary" type="button" data-action="view-messages" data-id="${escapeHtml(listing._id)}">
                         View Messages
                     </button>
+                    ${availabilityActions}
                 </div>
             </div>
         `;
@@ -796,15 +1113,34 @@
             .map((message) => {
                 const senderName =
                     message.sender && message.sender.name ? message.sender.name : "Marketplace user";
+                const offerTag =
+                    typeof message.offerAmount === "number" && message.offerAmount > 0
+                        ? ` <strong>Offer: ${escapeHtml(formatCurrency(message.offerAmount))}</strong>`
+                        : "";
 
                 return `
                     <article class="message-item">
-                        <p class="message-meta">${escapeHtml(senderName)} · ${formatDate(message.createdAt)}</p>
+                        <p class="message-meta">${escapeHtml(senderName)} · ${formatRelativeTime(
+                    message.createdAt
+                )}${offerTag}</p>
                         <p class="message-text">${escapeHtml(message.body)}</p>
                     </article>
                 `;
             })
             .join("");
+    }
+
+    async function updateAvailability(listingId, availability) {
+        const response = await apiRequest(
+            `/listings/${listingId}/availability`,
+            {
+                method: "PATCH",
+                body: { availability }
+            },
+            true
+        );
+
+        showToast(response.message || "Availability updated.", "success");
     }
 
     async function initAdminPage() {
@@ -900,6 +1236,10 @@
             <article class="metric"><h3>Pending</h3><p>${escapeHtml(String(data.pendingListings || 0))}</p></article>
             <article class="metric"><h3>Approved</h3><p>${escapeHtml(String(data.approvedListings || 0))}</p></article>
             <article class="metric"><h3>Rejected</h3><p>${escapeHtml(String(data.rejectedListings || 0))}</p></article>
+            <article class="metric"><h3>Sold</h3><p>${escapeHtml(String(data.soldListings || 0))}</p></article>
+            <article class="metric"><h3>Flagged</h3><p>${escapeHtml(String(data.flaggedListings || 0))}</p></article>
+            <article class="metric"><h3>Avg Price</h3><p>${escapeHtml(formatCurrency(data.averagePrice || 0))}</p></article>
+            <article class="metric"><h3>Avg Reputation</h3><p>${escapeHtml(String(data.averageReputation || 0))}</p></article>
         `;
     }
 
@@ -982,11 +1322,16 @@
                 const listingTitle = report.listing && report.listing.title ? report.listing.title : "Deleted listing";
                 const reporter = report.reporter && report.reporter.name ? report.reporter.name : "Unknown";
                 const seller = report.seller && report.seller.name ? report.seller.name : "Unknown";
+                const listingInfo = report.listing
+                    ? `${listingTitle} (${report.listing.category || "Other"}, ${
+                          report.listing.itemCondition || "Used"
+                      }, ${report.listing.availability || "available"})`
+                    : listingTitle;
 
                 return `
                     <tr>
                         <td>${escapeHtml(formatDate(report.createdAt))}</td>
-                        <td>${escapeHtml(listingTitle)}</td>
+                        <td>${escapeHtml(listingInfo)}</td>
                         <td>${escapeHtml(report.reason || "-")}</td>
                         <td>${escapeHtml(reporter)}</td>
                         <td>${escapeHtml(seller)}</td>
@@ -1006,6 +1351,27 @@
             listing.seller && typeof listing.seller.reputationScore === "number"
                 ? listing.seller.reputationScore
                 : "N/A";
+        const sellerVerified = !!(listing.seller && listing.seller.verifiedSeller);
+
+        const chips = [
+            `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
+            `<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`
+        ];
+        if (listing.deliveryAvailable) {
+            chips.push("<span class=\"chip\">Delivery</span>");
+        }
+        if (listing.negotiable) {
+            chips.push("<span class=\"chip\">Negotiable</span>");
+        }
+        if (listing.availability === "reserved") {
+            chips.push("<span class=\"chip chip-warning\">Reserved</span>");
+        }
+        if (listing.availability === "sold") {
+            chips.push("<span class=\"chip chip-sold\">Sold</span>");
+        }
+        if (sellerVerified) {
+            chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
+        }
 
         let actions = "";
         if (listing.status === "pending") {
@@ -1044,9 +1410,10 @@
                 <h3 class="listing-title">${escapeHtml(listing.title)}</h3>
                 <p class="listing-price">${formatCurrency(listing.price)}</p>
                 <p class="listing-description">${escapeHtml(truncate(listing.description, 120))}</p>
+                <div class="meta-chips">${chips.join("")}</div>
                 <div class="listing-meta">
                     <span>${escapeHtml(listing.location)}</span>
-                    <span>${formatDate(listing.createdAt)}</span>
+                    <span>${formatRelativeTime(listing.createdAt)}</span>
                 </div>
                 <div class="listing-meta">
                     <span>${escapeHtml(sellerName)}</span>
@@ -1055,6 +1422,10 @@
                 <div class="listing-meta">
                     <span>${escapeHtml(sellerEmail)}</span>
                     <span>Reports: ${escapeHtml(String(listing.reportsCount || 0))}</span>
+                </div>
+                <div class="listing-meta">
+                    <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>
+                    <span>Views: ${escapeHtml(String(listing.viewsCount || 0))}</span>
                 </div>
                 ${actions}
             </div>

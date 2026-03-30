@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
@@ -37,6 +37,19 @@ const upload = multer({
 });
 
 const VALID_REPORT_REASONS = ["Scam", "Fake Product", "Abusive Content", "Spam", "Other"];
+const VALID_CATEGORIES = [
+    "Electronics",
+    "Vehicles",
+    "Property",
+    "Home & Furniture",
+    "Fashion",
+    "Jobs",
+    "Services",
+    "Agriculture",
+    "Other"
+];
+const VALID_CONDITIONS = ["Brand New", "Like New", "Used - Good", "Used - Fair", "Refurbished"];
+const VALID_AVAILABILITY = ["available", "reserved", "sold"];
 const REPORT_THRESHOLD = Number(process.env.REPORT_THRESHOLD || 3);
 const REPORT_PENALTY = Number(process.env.REPORT_PENALTY || 10);
 
@@ -48,26 +61,143 @@ function escapeRegex(value) {
     return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function parseBoolean(value, fallback = false) {
+    const raw = String(value || "").trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(raw)) {
+        return true;
+    }
+    if (["false", "0", "no", "off"].includes(raw)) {
+        return false;
+    }
+    return fallback;
+}
+
+function parseNumberOrNull(value) {
+    const parsed = Number(value);
+    if (Number.isNaN(parsed)) {
+        return null;
+    }
+    return parsed;
+}
+
+function isValidPhone(phoneNumber) {
+    return /^[+]?[0-9][0-9\s-]{7,22}$/.test(phoneNumber);
+}
+
+router.get("/meta", async (req, res, next) => {
+    try {
+        const listingMatch = { status: "approved", availability: { $ne: "sold" } };
+        const [locations, priceStats] = await Promise.all([
+            Listing.distinct("location", listingMatch),
+            Listing.aggregate([
+                { $match: listingMatch },
+                {
+                    $group: {
+                        _id: null,
+                        minPrice: { $min: "$price" },
+                        maxPrice: { $max: "$price" }
+                    }
+                }
+            ])
+        ]);
+
+        const stats = priceStats[0] || {};
+
+        return res.json({
+            categories: VALID_CATEGORIES,
+            conditions: VALID_CONDITIONS,
+            locations: locations.filter(Boolean).sort(),
+            minPrice: typeof stats.minPrice === "number" ? stats.minPrice : 0,
+            maxPrice: typeof stats.maxPrice === "number" ? stats.maxPrice : 0
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
 router.get("/", async (req, res, next) => {
     try {
         const search = String(req.query.search || "").trim();
         const location = String(req.query.location || "").trim();
+        const category = String(req.query.category || "").trim();
+        const itemCondition = String(req.query.condition || "").trim();
+        const sort = String(req.query.sort || "newest").trim();
 
-        const query = { status: "approved" };
+        const minPrice = parseNumberOrNull(req.query.minPrice);
+        const maxPrice = parseNumberOrNull(req.query.maxPrice);
+
+        const page = Math.max(1, Number(req.query.page) || 1);
+        const limit = Math.min(60, Math.max(1, Number(req.query.limit) || 24));
+        const skip = (page - 1) * limit;
+
+        const query = {
+            status: "approved",
+            availability: { $ne: "sold" }
+        };
 
         if (search) {
-            query.title = { $regex: escapeRegex(search), $options: "i" };
+            const escaped = escapeRegex(search);
+            query.$or = [
+                { title: { $regex: escaped, $options: "i" } },
+                { description: { $regex: escaped, $options: "i" } }
+            ];
         }
 
         if (location) {
             query.location = { $regex: `^${escapeRegex(location)}$`, $options: "i" };
         }
 
-        const listings = await Listing.find(query)
-            .populate("seller", "name reputationScore")
-            .sort({ createdAt: -1 });
+        if (category && VALID_CATEGORIES.includes(category)) {
+            query.category = category;
+        }
 
-        return res.json({ listings });
+        if (itemCondition && VALID_CONDITIONS.includes(itemCondition)) {
+            query.itemCondition = itemCondition;
+        }
+
+        if (minPrice !== null || maxPrice !== null) {
+            query.price = {};
+            if (minPrice !== null && minPrice >= 0) {
+                query.price.$gte = minPrice;
+            }
+            if (maxPrice !== null && maxPrice >= 0) {
+                query.price.$lte = maxPrice;
+            }
+        }
+
+        const sortMap = {
+            newest: { createdAt: -1 },
+            oldest: { createdAt: 1 },
+            price_low_high: { price: 1, createdAt: -1 },
+            price_high_low: { price: -1, createdAt: -1 },
+            most_viewed: { viewsCount: -1, createdAt: -1 }
+        };
+        const sortBy = sortMap[sort] || sortMap.newest;
+
+        const [listings, total] = await Promise.all([
+            Listing.find(query)
+                .populate("seller", "name reputationScore verifiedSeller city")
+                .sort(sortBy)
+                .skip(skip)
+                .limit(limit),
+            Listing.countDocuments(query)
+        ]);
+
+        // Treat listing impressions as view events for a more realistic marketplace signal.
+        if (listings.length > 0) {
+            const ids = listings.map((listing) => listing._id);
+            await Listing.updateMany({ _id: { $in: ids } }, { $inc: { viewsCount: 1 } });
+            listings.forEach((listing) => {
+                listing.viewsCount += 1;
+            });
+        }
+
+        return res.json({
+            listings,
+            total,
+            page,
+            pages: Math.max(1, Math.ceil(total / limit))
+        });
     } catch (error) {
         return next(error);
     }
@@ -75,7 +205,10 @@ router.get("/", async (req, res, next) => {
 
 router.get("/locations", async (req, res, next) => {
     try {
-        const locations = await Listing.distinct("location", { status: "approved" });
+        const locations = await Listing.distinct("location", {
+            status: "approved",
+            availability: { $ne: "sold" }
+        });
         return res.json({ locations: locations.filter(Boolean).sort() });
     } catch (error) {
         return next(error);
@@ -96,10 +229,26 @@ router.post("/", auth, upload.single("image"), async (req, res, next) => {
         const title = String(req.body.title || "").trim();
         const description = String(req.body.description || "").trim();
         const location = String(req.body.location || "").trim();
+        const category = String(req.body.category || "").trim();
+        const itemCondition = String(req.body.itemCondition || "").trim();
+        const contactPhone = String(req.body.contactPhone || "").trim();
         const price = Number(req.body.price);
+        const negotiable = parseBoolean(req.body.negotiable, false);
+        const deliveryAvailable = parseBoolean(req.body.deliveryAvailable, false);
+        const meetupAvailable = parseBoolean(req.body.meetupAvailable, false);
 
-        if (!title || !description || !location || Number.isNaN(price)) {
-            return res.status(400).json({ message: "Title, description, price, and location are required." });
+        if (!title || !description || !location || Number.isNaN(price) || !contactPhone) {
+            return res.status(400).json({
+                message: "Title, description, price, location, and contact phone are required."
+            });
+        }
+
+        if (!VALID_CATEGORIES.includes(category)) {
+            return res.status(400).json({ message: "Invalid listing category." });
+        }
+
+        if (!VALID_CONDITIONS.includes(itemCondition)) {
+            return res.status(400).json({ message: "Invalid item condition." });
         }
 
         if (title.length < 3 || title.length > 120) {
@@ -114,12 +263,22 @@ router.post("/", auth, upload.single("image"), async (req, res, next) => {
             return res.status(400).json({ message: "Price must be a positive amount." });
         }
 
+        if (!isValidPhone(contactPhone)) {
+            return res.status(400).json({ message: "Contact phone format is invalid." });
+        }
+
         const listing = await Listing.create({
             seller: req.user.id,
             title,
             description,
             price,
             location,
+            category,
+            itemCondition,
+            contactPhone,
+            negotiable,
+            deliveryAvailable,
+            meetupAvailable,
             image: req.file ? `/uploads/${req.file.filename}` : "",
             status: "pending"
         });
@@ -127,6 +286,70 @@ router.post("/", auth, upload.single("image"), async (req, res, next) => {
         return res.status(201).json({
             message: "Listing submitted for moderation.",
             listing
+        });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.get("/:id", async (req, res, next) => {
+    try {
+        const listingId = String(req.params.id || "").trim();
+        if (!isValidObjectId(listingId)) {
+            return res.status(400).json({ message: "Invalid listing ID." });
+        }
+
+        const listing = await Listing.findOne({
+            _id: listingId,
+            status: "approved"
+        }).populate("seller", "name reputationScore verifiedSeller city");
+
+        if (!listing) {
+            return res.status(404).json({ message: "Listing not found." });
+        }
+
+        listing.viewsCount += 1;
+        await listing.save();
+
+        return res.json({ listing });
+    } catch (error) {
+        return next(error);
+    }
+});
+
+router.patch("/:id/availability", auth, async (req, res, next) => {
+    try {
+        const listingId = String(req.params.id || "").trim();
+        const availability = String(req.body.availability || "").trim().toLowerCase();
+
+        if (!isValidObjectId(listingId)) {
+            return res.status(400).json({ message: "Invalid listing ID." });
+        }
+
+        if (!VALID_AVAILABILITY.includes(availability)) {
+            return res.status(400).json({ message: "Availability must be available, reserved, or sold." });
+        }
+
+        const listing = await Listing.findById(listingId).select("seller availability");
+        if (!listing) {
+            return res.status(404).json({ message: "Listing not found." });
+        }
+
+        if (String(listing.seller) !== req.user.id) {
+            return res.status(403).json({ message: "Only the seller can update availability." });
+        }
+
+        const previousAvailability = listing.availability;
+        listing.availability = availability;
+        await listing.save();
+
+        if (previousAvailability !== "sold" && availability === "sold") {
+            await adjustReputation(req.user.id, 3);
+        }
+
+        return res.json({
+            message: `Listing marked as ${availability}.`,
+            availability
         });
     } catch (error) {
         return next(error);
@@ -147,7 +370,9 @@ router.post("/:id/report", auth, async (req, res, next) => {
             return res.status(400).json({ message: "Invalid report reason." });
         }
 
-        const listing = await Listing.findById(listingId).select("seller reportsCount penalizedForReports status");
+        const listing = await Listing.findById(listingId).select(
+            "seller reportsCount penalizedForReports status availability"
+        );
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
         }
@@ -158,6 +383,10 @@ router.post("/:id/report", auth, async (req, res, next) => {
 
         if (listing.status !== "approved") {
             return res.status(400).json({ message: "Only approved listings can be reported." });
+        }
+
+        if (listing.availability === "sold") {
+            return res.status(400).json({ message: "Sold listings cannot be reported." });
         }
 
         try {
@@ -182,6 +411,8 @@ router.post("/:id/report", auth, async (req, res, next) => {
         );
 
         let sellerPenalized = false;
+        let movedToPendingReview = false;
+
         if (
             updatedListing &&
             updatedListing.reportsCount >= REPORT_THRESHOLD &&
@@ -193,10 +424,22 @@ router.post("/:id/report", auth, async (req, res, next) => {
             sellerPenalized = true;
         }
 
+        if (
+            updatedListing &&
+            updatedListing.reportsCount >= REPORT_THRESHOLD + 1 &&
+            updatedListing.status === "approved"
+        ) {
+            updatedListing.status = "pending";
+            await updatedListing.save();
+            movedToPendingReview = true;
+        }
+
         return res.status(201).json({
             message: "Report submitted successfully.",
             reportsCount: updatedListing ? updatedListing.reportsCount : listing.reportsCount + 1,
-            sellerPenalized
+            sellerPenalized,
+            movedToPendingReview,
+            listingStatus: updatedListing ? updatedListing.status : listing.status
         });
     } catch (error) {
         return next(error);
@@ -207,16 +450,23 @@ router.post("/:id/messages", auth, async (req, res, next) => {
     try {
         const listingId = String(req.params.id || "").trim();
         const messageBody = String(req.body.message || "").trim();
+        const offerAmountRaw = parseNumberOrNull(req.body.offerAmount);
+        const hasOffer = offerAmountRaw !== null && offerAmountRaw > 0;
 
         if (!isValidObjectId(listingId)) {
             return res.status(400).json({ message: "Invalid listing ID." });
         }
 
-        if (messageBody.length < 2 || messageBody.length > 500) {
+        const textToSend = messageBody || (hasOffer ? "Buyer submitted an offer." : "");
+        if (textToSend.length < 2 || textToSend.length > 500) {
             return res.status(400).json({ message: "Message must be between 2 and 500 characters." });
         }
 
-        const listing = await Listing.findById(listingId).select("seller status messages");
+        if (hasOffer && offerAmountRaw < 50) {
+            return res.status(400).json({ message: "Offer amount must be at least 50." });
+        }
+
+        const listing = await Listing.findById(listingId).select("seller status availability messages");
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
         }
@@ -225,10 +475,21 @@ router.post("/:id/messages", auth, async (req, res, next) => {
             return res.status(400).json({ message: "This listing is not open for messaging." });
         }
 
-        listing.messages.push({ sender: req.user.id, body: messageBody });
+        if (listing.availability === "sold" && String(listing.seller) !== req.user.id) {
+            return res.status(400).json({ message: "This listing has already been sold." });
+        }
+
+        listing.messages.push({
+            sender: req.user.id,
+            type: hasOffer ? "offer" : "message",
+            body: textToSend,
+            offerAmount: hasOffer ? Number(offerAmountRaw.toFixed(2)) : null
+        });
         await listing.save();
 
-        return res.status(201).json({ message: "Message sent." });
+        return res.status(201).json({
+            message: hasOffer ? "Offer sent to seller." : "Message sent."
+        });
     } catch (error) {
         return next(error);
     }
@@ -277,7 +538,9 @@ router.post("/:id/pay", auth, async (req, res, next) => {
             return res.status(400).json({ message: "Invalid listing ID." });
         }
 
-        const listing = await Listing.findById(listingId).select("seller price status title");
+        const listing = await Listing.findById(listingId).select(
+            "seller price status title availability deliveryAvailable"
+        );
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
         }
@@ -286,25 +549,58 @@ router.post("/:id/pay", auth, async (req, res, next) => {
             return res.status(400).json({ message: "Only approved listings can be paid for." });
         }
 
+        if (listing.availability === "sold") {
+            return res.status(400).json({ message: "This listing is already marked as sold." });
+        }
+
+        if (listing.availability === "reserved") {
+            return res.status(400).json({ message: "This listing is currently reserved." });
+        }
+
         if (String(listing.seller) === req.user.id) {
             return res.status(400).json({ message: "You cannot pay for your own listing." });
         }
 
         const transactionId = `MPESA-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const processingFee = Number((listing.price * 0.015).toFixed(2));
+        const totalCharged = Number((listing.price + processingFee).toFixed(2));
 
-        await Promise.all([
-            adjustReputation(req.user.id, 1),
-            adjustReputation(listing.seller, 2)
-        ]);
+        const roll = Math.random();
+        let paymentStatus = "success";
+        if (roll < 0.08) {
+            paymentStatus = "failed";
+        } else if (roll < 0.22) {
+            paymentStatus = "pending";
+        }
+
+        if (paymentStatus === "success") {
+            await Promise.all([
+                adjustReputation(req.user.id, 1),
+                adjustReputation(listing.seller, 2)
+            ]);
+        }
 
         return res.json({
-            message: "Payment simulated successfully.",
+            message:
+                paymentStatus === "success"
+                    ? "Payment simulated successfully."
+                    : paymentStatus === "pending"
+                    ? "Payment initiated and awaiting confirmation."
+                    : "Payment simulation failed due to timeout.",
             payment: {
                 transactionId,
                 amount: listing.price,
+                processingFee,
+                totalCharged,
                 method: "M-Pesa (Simulated)",
                 listingTitle: listing.title,
-                status: "success"
+                status: paymentStatus,
+                expectedFulfilment:
+                    paymentStatus === "success"
+                        ? listing.deliveryAvailable
+                            ? "1-3 days delivery"
+                            : "Meetup within 24 hours"
+                        : "N/A"
             }
         });
     } catch (error) {
