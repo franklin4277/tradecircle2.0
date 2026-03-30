@@ -566,16 +566,119 @@
         return trimmed;
     }
 
+    function normalizeLower(value) {
+        return String(value || "").trim().toLowerCase();
+    }
+
+    function formatLabel(value, fallback = "N/A") {
+        const normalized = normalizeLower(value);
+        if (!normalized) {
+            return fallback;
+        }
+
+        return normalized
+            .split(/\s+/)
+            .filter(Boolean)
+            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(" ");
+    }
+
     function getStatusClass(status) {
-        if (status === "approved") {
+        const normalized = normalizeLower(status);
+        if (normalized === "approved") {
             return "badge-approved";
         }
 
-        if (status === "rejected") {
+        if (normalized === "rejected") {
             return "badge-rejected";
         }
 
         return "badge-pending";
+    }
+
+    function isServiceListingItem(listing) {
+        const listingType = normalizeLower(listing && listing.listingType);
+        if (listingType) {
+            return listingType === "service";
+        }
+        return normalizeLower(listing && listing.category) === "services";
+    }
+
+    function getSellerSummary(seller, fallbackName = "Seller") {
+        const source = seller && typeof seller === "object" ? seller : {};
+        const sellerId =
+            seller && typeof seller !== "object"
+                ? String(seller)
+                : String(source._id || source.id || "");
+
+        return {
+            id: sellerId,
+            name: source.name ? String(source.name) : fallbackName,
+            email: source.email ? String(source.email) : "No email",
+            reputation:
+                typeof source.reputationScore === "number" ? source.reputationScore : "N/A",
+            starRating: typeof source.starRating === "number" ? source.starRating : 0,
+            ratingCount: typeof source.ratingCount === "number" ? source.ratingCount : 0,
+            verified: !!source.verifiedSeller
+        };
+    }
+
+    function getListingImageHtml(listing) {
+        if (listing && listing.image) {
+            return `<img class="listing-image" src="${escapeHtml(listing.image)}" alt="${escapeHtml(
+                listing.title || "Listing"
+            )}">`;
+        }
+
+        return "<div class=\"listing-image\" aria-hidden=\"true\"></div>";
+    }
+
+    function buildListingChipList(listing, options = {}) {
+        const {
+            includeCondition = true,
+            includeServiceChip = false,
+            includeNegotiable = true,
+            includeDelivery = true,
+            includeAvailability = true,
+            includeRisk = false,
+            includeMediumRisk = false,
+            includeVerifiedSeller = false,
+            sellerVerified = false
+        } = options;
+
+        const chips = [`<span class="chip">${escapeHtml(listing.category || "Other")}</span>`];
+
+        if (includeCondition) {
+            chips.push(`<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`);
+        }
+        if (includeServiceChip && isServiceListingItem(listing)) {
+            chips.push("<span class=\"chip\">Service</span>");
+        }
+        if (includeNegotiable && listing.negotiable) {
+            chips.push("<span class=\"chip\">Negotiable</span>");
+        }
+        if (includeDelivery && listing.deliveryAvailable) {
+            chips.push("<span class=\"chip\">Delivery</span>");
+        }
+        if (includeAvailability && normalizeLower(listing.availability) === "reserved") {
+            chips.push("<span class=\"chip chip-warning\">Reserved</span>");
+        }
+        if (includeAvailability && normalizeLower(listing.availability) === "sold") {
+            chips.push("<span class=\"chip chip-sold\">Sold</span>");
+        }
+        if (includeRisk) {
+            const riskLevel = normalizeLower(listing.riskLevel);
+            if (riskLevel === "high") {
+                chips.push("<span class=\"chip chip-warning\">High Risk</span>");
+            } else if (includeMediumRisk && riskLevel === "medium") {
+                chips.push("<span class=\"chip\">Medium Risk</span>");
+            }
+        }
+        if (includeVerifiedSeller && sellerVerified) {
+            chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
+        }
+
+        return chips;
     }
 
     function normalizeReason(input) {
@@ -902,54 +1005,20 @@
         const card = document.createElement("article");
         card.className = "listing-card";
 
-        const sellerName = listing.seller && listing.seller.name ? listing.seller.name : "Seller";
-        const sellerRep =
-            listing.seller && typeof listing.seller.reputationScore === "number"
-                ? listing.seller.reputationScore
-                : "N/A";
-        const sellerStarRating =
-            listing.seller && typeof listing.seller.starRating === "number"
-                ? listing.seller.starRating
-                : 0;
-        const sellerRatingCount =
-            listing.seller && typeof listing.seller.ratingCount === "number"
-                ? listing.seller.ratingCount
-                : 0;
-
-        const sellerId = listing.seller && (listing.seller._id || listing.seller);
-        const isOwner = !!(state.user && sellerId && String(sellerId) === String(state.user._id));
-        const sellerVerified = !!(listing.seller && listing.seller.verifiedSeller);
+        const seller = getSellerSummary(listing.seller, "Seller");
+        const isOwner = !!(state.user && seller.id && String(seller.id) === String(state.user._id));
         const canTrade = canCurrentUserTrade();
-        const isServiceListing =
-            String(listing.category || "")
-                .trim()
-                .toLowerCase() === "services";
-
-        const chips = [
-            `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
-            `<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`
-        ];
-        if (String(listing.listingType || "").toLowerCase() === "service") {
-            chips.push("<span class=\"chip\">Service</span>");
-        }
-        if (listing.negotiable) {
-            chips.push("<span class=\"chip\">Negotiable</span>");
-        }
-        if (listing.deliveryAvailable) {
-            chips.push("<span class=\"chip\">Delivery</span>");
-        }
-        if (listing.availability === "reserved") {
-            chips.push("<span class=\"chip chip-warning\">Reserved</span>");
-        }
-        if (listing.availability === "sold") {
-            chips.push("<span class=\"chip chip-sold\">Sold</span>");
-        }
-        if (String(listing.riskLevel || "").toLowerCase() === "high") {
-            chips.push("<span class=\"chip chip-warning\">High Risk</span>");
-        }
-        if (sellerVerified) {
-            chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
-        }
+        const isServiceListing = isServiceListingItem(listing);
+        const chips = buildListingChipList(listing, {
+            includeCondition: true,
+            includeServiceChip: true,
+            includeNegotiable: true,
+            includeDelivery: true,
+            includeAvailability: true,
+            includeRisk: true,
+            includeVerifiedSeller: true,
+            sellerVerified: seller.verified
+        });
 
         let actionHtml = isServiceListing
             ? "<p class=\"card-hint\">Login to contact the service provider. Service listings are connection-only.</p>"
@@ -989,14 +1058,13 @@
             actionHtml = "<p class=\"card-hint\">This is your listing.</p>";
         }
 
-        const imageHtml = listing.image
-            ? `<img class="listing-image" src="${escapeHtml(listing.image)}" alt="${escapeHtml(listing.title)}">`
-            : "<div class=\"listing-image\"></div>";
+        const imageHtml = getListingImageHtml(listing);
+        const statusLabel = formatLabel(listing.status || "approved", "Approved");
 
         card.innerHTML = `
             ${imageHtml}
             <div class="listing-body">
-                <p class="badge badge-approved">approved</p>
+                <p class="badge ${getStatusClass(listing.status)}">${escapeHtml(statusLabel)}</p>
                 <h3 class="listing-title">${escapeHtml(listing.title)}</h3>
                 <p class="listing-price">${formatCurrency(listing.price)}</p>
                 <p class="listing-description">${escapeHtml(truncate(listing.description, 140))}</p>
@@ -1006,16 +1074,16 @@
                     <span>${formatRelativeTime(listing.createdAt)}</span>
                 </div>
                 <div class="listing-meta">
-                    <span>Seller: ${escapeHtml(sellerName)}</span>
-                    <span>Rep: ${escapeHtml(String(sellerRep))}</span>
+                    <span>Seller: ${escapeHtml(seller.name)}</span>
+                    <span>Rep: ${escapeHtml(String(seller.reputation))}</span>
                 </div>
                 <div class="listing-meta">
-                    <span>Seller Rating: ${escapeHtml(formatStars(sellerStarRating, sellerRatingCount))}</span>
+                    <span>Seller Rating: ${escapeHtml(formatStars(seller.starRating, seller.ratingCount))}</span>
                     <span>Views: ${escapeHtml(String(listing.viewsCount || 0))}</span>
                 </div>
                 <div class="listing-meta">
                     <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>
-                    <span>Status: ${escapeHtml(listing.availability || "available")}</span>
+                    <span>Status: ${escapeHtml(formatLabel(listing.availability, "Available"))}</span>
                 </div>
                 ${actionHtml}
             </div>
@@ -2554,27 +2622,17 @@
         const card = document.createElement("article");
         card.className = "listing-card";
 
-        const imageHtml = listing.image
-            ? `<img class=\"listing-image\" src=\"${escapeHtml(listing.image)}\" alt=\"${escapeHtml(listing.title)}\">`
-            : "<div class=\"listing-image\"></div>";
+        const imageHtml = getListingImageHtml(listing);
 
         const messageCount = Array.isArray(listing.messages) ? listing.messages.length : 0;
-        const chips = [
-            `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
-            `<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`
-        ];
-        if (listing.negotiable) {
-            chips.push("<span class=\"chip\">Negotiable</span>");
-        }
-        if (listing.deliveryAvailable) {
-            chips.push("<span class=\"chip\">Delivery</span>");
-        }
-        if (listing.availability === "reserved") {
-            chips.push("<span class=\"chip chip-warning\">Reserved</span>");
-        }
-        if (listing.availability === "sold") {
-            chips.push("<span class=\"chip chip-sold\">Sold</span>");
-        }
+        const chips = buildListingChipList(listing, {
+            includeCondition: true,
+            includeServiceChip: true,
+            includeNegotiable: true,
+            includeDelivery: true,
+            includeAvailability: true
+        });
+        const statusLabel = formatLabel(listing.status, "Pending");
 
         let availabilityActions = "";
         if (listing.availability !== "available") {
@@ -2590,7 +2648,7 @@
         card.innerHTML = `
             ${imageHtml}
             <div class="listing-body">
-                <p class="badge ${getStatusClass(listing.status)}">${escapeHtml(listing.status)}</p>
+                <p class="badge ${getStatusClass(listing.status)}">${escapeHtml(statusLabel)}</p>
                 <h3 class="listing-title">${escapeHtml(listing.title)}</h3>
                 <p class="listing-price">${formatCurrency(listing.price)}</p>
                 <p class="listing-description">${escapeHtml(truncate(listing.description, 130))}</p>
@@ -2604,7 +2662,7 @@
                     <span>Messages: ${escapeHtml(String(messageCount))}</span>
                 </div>
                 <div class="listing-meta">
-                    <span>Risk: ${escapeHtml(String(listing.riskLevel || "low"))}</span>
+                    <span>Risk: ${escapeHtml(formatLabel(listing.riskLevel, "Low"))}</span>
                     <span>Score: ${escapeHtml(String(listing.riskScore || 0))}</span>
                 </div>
                 <div class="listing-meta">
@@ -3330,49 +3388,18 @@
         const card = document.createElement("article");
         card.className = "listing-card";
 
-        const sellerName = listing.seller && listing.seller.name ? listing.seller.name : "Unknown seller";
-        const sellerEmail = listing.seller && listing.seller.email ? listing.seller.email : "No email";
-        const sellerReputation =
-            listing.seller && typeof listing.seller.reputationScore === "number"
-                ? listing.seller.reputationScore
-                : "N/A";
-        const sellerStarRating =
-            listing.seller && typeof listing.seller.starRating === "number"
-                ? listing.seller.starRating
-                : 0;
-        const sellerRatingCount =
-            listing.seller && typeof listing.seller.ratingCount === "number"
-                ? listing.seller.ratingCount
-                : 0;
-        const sellerVerified = !!(listing.seller && listing.seller.verifiedSeller);
-
-        const chips = [
-            `<span class="chip">${escapeHtml(listing.category || "Other")}</span>`,
-            `<span class="chip">${escapeHtml(listing.itemCondition || "Used")}</span>`
-        ];
-        if (String(listing.listingType || "").toLowerCase() === "service") {
-            chips.push("<span class=\"chip\">Service</span>");
-        }
-        if (listing.deliveryAvailable) {
-            chips.push("<span class=\"chip\">Delivery</span>");
-        }
-        if (listing.negotiable) {
-            chips.push("<span class=\"chip\">Negotiable</span>");
-        }
-        if (listing.availability === "reserved") {
-            chips.push("<span class=\"chip chip-warning\">Reserved</span>");
-        }
-        if (listing.availability === "sold") {
-            chips.push("<span class=\"chip chip-sold\">Sold</span>");
-        }
-        if (sellerVerified) {
-            chips.push("<span class=\"chip chip-verified\">Verified Seller</span>");
-        }
-        if (String(listing.riskLevel || "").toLowerCase() === "high") {
-            chips.push("<span class=\"chip chip-warning\">High Risk</span>");
-        } else if (String(listing.riskLevel || "").toLowerCase() === "medium") {
-            chips.push("<span class=\"chip\">Medium Risk</span>");
-        }
+        const seller = getSellerSummary(listing.seller, "Unknown seller");
+        const chips = buildListingChipList(listing, {
+            includeCondition: true,
+            includeServiceChip: true,
+            includeNegotiable: true,
+            includeDelivery: true,
+            includeAvailability: true,
+            includeRisk: true,
+            includeMediumRisk: true,
+            includeVerifiedSeller: true,
+            sellerVerified: seller.verified
+        });
 
         let moderationButtons = "";
         if (listing.status === "pending") {
@@ -3401,14 +3428,13 @@
             </div>
         `;
 
-        const imageHtml = listing.image
-            ? `<img class=\"listing-image\" src=\"${escapeHtml(listing.image)}\" alt=\"${escapeHtml(listing.title)}\">`
-            : "<div class=\"listing-image\"></div>";
+        const imageHtml = getListingImageHtml(listing);
+        const statusLabel = formatLabel(listing.status, "Pending");
 
         card.innerHTML = `
             ${imageHtml}
             <div class="listing-body">
-                <p class="badge ${getStatusClass(listing.status)}">${escapeHtml(listing.status)}</p>
+                <p class="badge ${getStatusClass(listing.status)}">${escapeHtml(statusLabel)}</p>
                 <h3 class="listing-title">${escapeHtml(listing.title)}</h3>
                 <p class="listing-price">${formatCurrency(listing.price)}</p>
                 <p class="listing-description">${escapeHtml(truncate(listing.description, 120))}</p>
@@ -3418,16 +3444,16 @@
                     <span>${formatRelativeTime(listing.createdAt)}</span>
                 </div>
                 <div class="listing-meta">
-                    <span>${escapeHtml(sellerName)}</span>
-                    <span>Rep: ${escapeHtml(String(sellerReputation))}</span>
+                    <span>${escapeHtml(seller.name)}</span>
+                    <span>Rep: ${escapeHtml(String(seller.reputation))}</span>
                 </div>
                 <div class="listing-meta">
-                    <span>Stars: ${escapeHtml(formatStars(sellerStarRating, sellerRatingCount))}</span>
+                    <span>Stars: ${escapeHtml(formatStars(seller.starRating, seller.ratingCount))}</span>
                     <span>Reports: ${escapeHtml(String(listing.reportsCount || 0))}</span>
                 </div>
                 <div class="listing-meta">
-                    <span>${escapeHtml(sellerEmail)}</span>
-                    <span>Risk: ${escapeHtml(String(listing.riskLevel || "low"))}</span>
+                    <span>${escapeHtml(seller.email)}</span>
+                    <span>Risk: ${escapeHtml(formatLabel(listing.riskLevel, "Low"))}</span>
                 </div>
                 <div class="listing-meta">
                     <span>Phone: ${escapeHtml(formatPhone(listing.contactPhone))}</span>

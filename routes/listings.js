@@ -673,7 +673,7 @@ router.post("/", auth, requireCommunityVerified, upload.single("image"), async (
         }
 
         if (price < 0) {
-            return res.status(400).json({ message: "Price must be a positive amount." });
+            return res.status(400).json({ message: "Price must be zero or greater." });
         }
 
         if (!isValidPhone(contactPhone)) {
