@@ -20,17 +20,8 @@ if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-const storage = multer.diskStorage({
-    destination: (_, __, cb) => cb(null, uploadsDir),
-    filename: (_, file, cb) => {
-        const extension = path.extname(file.originalname || "").toLowerCase();
-        const cleanExt = extension || ".jpg";
-        cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${cleanExt}`);
-    }
-});
-
 const upload = multer({
-    storage,
+    storage: multer.memoryStorage(),
     limits: { fileSize: 5 * 1024 * 1024 },
     fileFilter: (_, file, cb) => {
         if (!file.mimetype || !file.mimetype.startsWith("image/")) {
@@ -58,6 +49,7 @@ const VALID_AVAILABILITY = ["available", "reserved", "sold"];
 const ACTIVE_ESCROW_STATUSES = ["funded", "shipped", "disputed"];
 const REPORT_THRESHOLD = Number(process.env.REPORT_THRESHOLD || 3);
 const REPORT_PENALTY = Number(process.env.REPORT_PENALTY || 10);
+const LISTING_IMAGE_BUCKET = "listingImages";
 const PAYMENTS_ENABLED =
     String(process.env.ENABLE_SIMULATED_PAYMENTS || "")
         .trim()
@@ -178,13 +170,121 @@ function isStaffUser(user) {
     return role === "admin" || role === "moderator";
 }
 
-async function removeListingImageIfExists(imagePath) {
+let listingImageBucket = null;
+
+function getListingImageBucket() {
+    const db = mongoose.connection.db;
+    if (!db) {
+        throw new Error("Database connection is not ready for image storage.");
+    }
+
+    if (!listingImageBucket) {
+        listingImageBucket = new mongoose.mongo.GridFSBucket(db, {
+            bucketName: LISTING_IMAGE_BUCKET
+        });
+    }
+
+    return listingImageBucket;
+}
+
+function normalizeObjectId(value) {
+    const raw = String(value || "").trim();
+    if (!isValidObjectId(raw)) {
+        return null;
+    }
+    return new mongoose.Types.ObjectId(raw);
+}
+
+function getLegacyUploadFileName(imagePath) {
     const raw = String(imagePath || "").trim();
-    if (!raw) {
-        return;
+    if (!raw || !raw.startsWith("/uploads/")) {
+        return "";
     }
 
     const fileName = path.basename(raw);
+    if (!fileName || fileName === "." || fileName === "/") {
+        return "";
+    }
+    return fileName;
+}
+
+function getGridFsIdFromImagePath(imagePath) {
+    const raw = String(imagePath || "").trim();
+    if (!raw) {
+        return null;
+    }
+
+    const marker = "/api/listings/images/";
+    const markerIndex = raw.indexOf(marker);
+    if (markerIndex === -1) {
+        return null;
+    }
+
+    const candidate = raw.slice(markerIndex + marker.length).split(/[?#/]/)[0];
+    return normalizeObjectId(candidate);
+}
+
+async function uploadListingImageToGridFS(file) {
+    if (!file || !file.buffer || file.buffer.length === 0) {
+        return null;
+    }
+
+    const extension = path.extname(String(file.originalname || "")).toLowerCase();
+    const cleanExtension = extension || ".jpg";
+    const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${cleanExtension}`;
+    const bucket = getListingImageBucket();
+
+    return new Promise((resolve, reject) => {
+        const uploadStream = bucket.openUploadStream(fileName, {
+            contentType: String(file.mimetype || "").trim() || "application/octet-stream",
+            metadata: {
+                originalName: String(file.originalname || "").trim() || fileName
+            }
+        });
+
+        uploadStream.on("error", reject);
+        uploadStream.on("finish", (storedFile) => {
+            resolve({
+                fileId: storedFile._id,
+                imageUrl: `/api/listings/images/${storedFile._id}`,
+                mimeType: String(file.mimetype || "").trim() || "application/octet-stream"
+            });
+        });
+
+        uploadStream.end(file.buffer);
+    });
+}
+
+async function removeGridFsImageById(fileId) {
+    const objectId = normalizeObjectId(fileId);
+    if (!objectId) {
+        return;
+    }
+
+    const bucket = getListingImageBucket();
+    try {
+        await bucket.delete(objectId);
+    } catch (error) {
+        const message = String(error && error.message ? error.message : "");
+        if (!message.includes("FileNotFound")) {
+            throw error;
+        }
+    }
+}
+
+async function removeListingImageIfExists(listing) {
+    if (!listing) {
+        return;
+    }
+
+    const storageType = String(listing.imageStorage || "").trim().toLowerCase();
+    const gridFsId = normalizeObjectId(listing.imageFileId) || getGridFsIdFromImagePath(listing.image);
+    if (gridFsId && storageType !== "local") {
+        await removeGridFsImageById(gridFsId);
+        return;
+    }
+
+    const fileName = getLegacyUploadFileName(listing.image);
     if (!fileName) {
         return;
     }
@@ -530,6 +630,7 @@ router.get("/conversations", auth, async (req, res, next) => {
 });
 
 router.post("/", auth, requireCommunityVerified, upload.single("image"), async (req, res, next) => {
+    let uploadedImage = null;
     try {
         const title = String(req.body.title || "").trim();
         const description = String(req.body.description || "").trim();
@@ -579,6 +680,10 @@ router.post("/", auth, requireCommunityVerified, upload.single("image"), async (
             return res.status(400).json({ message: "Contact phone format is invalid." });
         }
 
+        if (req.file) {
+            uploadedImage = await uploadListingImageToGridFS(req.file);
+        }
+
         const listing = await Listing.create({
             seller: req.user.id,
             owner: req.user.id,
@@ -595,7 +700,10 @@ router.post("/", auth, requireCommunityVerified, upload.single("image"), async (
             serviceRateType: isService ? serviceRateType : "fixed",
             serviceRemoteAvailable: isService ? serviceRemoteAvailable : false,
             serviceResponseTimeHours: isService ? serviceResponseTimeHours : 24,
-            image: req.file ? `/uploads/${req.file.filename}` : "",
+            image: uploadedImage ? uploadedImage.imageUrl : "",
+            imageStorage: uploadedImage ? "gridfs" : "none",
+            imageFileId: uploadedImage ? uploadedImage.fileId : null,
+            imageMimeType: uploadedImage ? uploadedImage.mimeType : "",
             status: "pending"
         });
         await applyListingRiskSignals(listing);
@@ -605,6 +713,56 @@ router.post("/", auth, requireCommunityVerified, upload.single("image"), async (
             message: "Listing submitted for moderation.",
             listing
         });
+    } catch (error) {
+        if (uploadedImage && uploadedImage.fileId) {
+            try {
+                await removeGridFsImageById(uploadedImage.fileId);
+            } catch {
+                // Best effort cleanup when listing creation fails after upload.
+            }
+        }
+        return next(error);
+    }
+});
+
+router.get("/images/:imageId", async (req, res, next) => {
+    try {
+        const imageId = String(req.params.imageId || "").trim();
+        const objectId = normalizeObjectId(imageId);
+        if (!objectId) {
+            return res.status(400).json({ message: "Invalid image ID." });
+        }
+
+        const db = mongoose.connection.db;
+        if (!db) {
+            return res.status(503).json({ message: "Image service is temporarily unavailable." });
+        }
+
+        const file = await db.collection(`${LISTING_IMAGE_BUCKET}.files`).findOne({ _id: objectId });
+        if (!file) {
+            return res.status(404).json({ message: "Image not found." });
+        }
+
+        const bucket = getListingImageBucket();
+        if (typeof file.length === "number") {
+            res.setHeader("Content-Length", String(file.length));
+        }
+        res.setHeader("Content-Type", String(file.contentType || "application/octet-stream"));
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+
+        const downloadStream = bucket.openDownloadStream(objectId);
+        downloadStream.on("error", (error) => {
+            const message = String(error && error.message ? error.message : "");
+            if (message.includes("FileNotFound") && !res.headersSent) {
+                return res.status(404).json({ message: "Image not found." });
+            }
+            if (!res.headersSent) {
+                return next(error);
+            }
+            return res.end();
+        });
+
+        return downloadStream.pipe(res);
     } catch (error) {
         return next(error);
     }
@@ -646,7 +804,7 @@ router.delete("/:id", auth, async (req, res, next) => {
         }
 
         const listing = await Listing.findById(listingId).select(
-            "seller owner image availability status"
+            "seller owner image imageStorage imageFileId availability status"
         );
         if (!listing) {
             return res.status(404).json({ message: "Listing not found." });
@@ -677,7 +835,7 @@ router.delete("/:id", auth, async (req, res, next) => {
             Listing.findByIdAndDelete(listing._id),
             Report.deleteMany({ listing: listing._id })
         ]);
-        await removeListingImageIfExists(listing.image);
+        await removeListingImageIfExists(listing);
 
         return res.json({ message: "Listing removed successfully." });
     } catch (error) {

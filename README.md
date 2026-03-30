@@ -10,7 +10,7 @@ admin analytics, moderation logs, and seller-buyer messaging.
 - Database: MongoDB Atlas + Mongoose
 - Frontend: HTML, CSS, JavaScript (no framework)
 - Authentication: JWT + bcrypt password hashing
-- Uploads: Multer (local `uploads/` storage)
+- Uploads: Multer + MongoDB GridFS (`listingImages` bucket)
 
 ## Project Structure
 
@@ -53,7 +53,7 @@ admin analytics, moderation logs, and seller-buyer messaging.
   - `admin.html`
   - `style.css`
   - `script.js`
-- `uploads/`
+- `uploads/` (legacy local files only; new uploads use GridFS)
 
 ## Features
 
@@ -64,7 +64,7 @@ admin analytics, moderation logs, and seller-buyer messaging.
 - Strong password policy for registration (minimum 8 characters with letters and numbers; stricter for admin)
 - User reputation system (default 100)
 - Star rating system (all users start at 0 stars and gain ratings from completed escrow trades)
-- Listing creation with image uploads
+- Listing creation with image uploads stored in MongoDB GridFS
 - Listing moderation workflow (`pending`, `approved`, `rejected`)
 - Staff listing controls (admin/moderator can remove listings from moderation dashboard)
 - Public marketplace shows only approved listings
@@ -152,7 +152,7 @@ ESCROW_SHIP_WINDOW_HOURS=72
 ESCROW_REMINDER_LEAD_HOURS=24
 ESCROW_SLA_INTERVAL_MS=300000
 
-# Optional: persistent uploads directory (Render disk mount example)
+# Optional: legacy local uploads directory (only for old `/uploads/...` files)
 UPLOADS_DIR=/var/data/uploads
 ```
 
@@ -164,7 +164,8 @@ Production notes:
 - In production, `CORS_ORIGIN` must be set.
 - Set `APP_BASE_URL` in production so password reset links point to your live site.
 - `ALLOW_ADMIN_REGISTRATION` and `ALLOW_ADMIN_PROMOTION` are `false` by default for stronger admin security.
-- On hosted environments, use persistent storage path via `UPLOADS_DIR` (otherwise local uploads are ephemeral).
+- New listing images are persisted in MongoDB GridFS (survives Render sleep/restart).
+- `UPLOADS_DIR` only matters for serving/deleting older legacy local images.
 
 ## 3. Run
 
@@ -208,5 +209,6 @@ Open:
 
 ## Notes
 
-- This project stores uploaded images in `uploads/` locally.
+- New uploads are stored in MongoDB GridFS (`listingImages` bucket).
+- Legacy local `uploads/` support remains for backward compatibility.
 - For production, use a persistent file store and robust distributed rate limiter.

@@ -160,6 +160,22 @@ const listingSchema = new mongoose.Schema(
             type: String,
             default: ""
         },
+        imageStorage: {
+            type: String,
+            enum: ["none", "local", "gridfs"],
+            default: "none"
+        },
+        imageFileId: {
+            type: mongoose.Schema.Types.ObjectId,
+            default: null,
+            index: true
+        },
+        imageMimeType: {
+            type: String,
+            trim: true,
+            maxlength: 120,
+            default: ""
+        },
         location: {
             type: String,
             required: true,
