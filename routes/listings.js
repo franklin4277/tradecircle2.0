@@ -244,9 +244,19 @@ async function uploadListingImageToGridFS(file) {
 
         uploadStream.on("error", reject);
         uploadStream.on("finish", (storedFile) => {
+            const uploadedId =
+                (storedFile && storedFile._id) ||
+                uploadStream.id ||
+                null;
+
+            if (!uploadedId) {
+                reject(new Error("Image upload completed without a file ID."));
+                return;
+            }
+
             resolve({
-                fileId: storedFile._id,
-                imageUrl: `/api/listings/images/${storedFile._id}`,
+                fileId: uploadedId,
+                imageUrl: `/api/listings/images/${uploadedId}`,
                 mimeType: String(file.mimetype || "").trim() || "application/octet-stream"
             });
         });
