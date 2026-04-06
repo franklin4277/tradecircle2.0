@@ -170,7 +170,11 @@ app.use("/uploads", express.static(uploadsDir));
 app.use(express.static(publicDir));
 
 app.get("/health", (_, res) => {
-    return res.json({ status: "ok", service: "TradeCircle API" });
+    return res.json({
+        status: "ok",
+        service: "TradeCircle API",
+        db: dbReady ? "connected" : "disconnected"
+    });
 });
 
 app.use("/api/auth", authRoutes);
@@ -246,6 +250,46 @@ async function ensureAdminUser() {
     });
 }
 
+let dbReady = false;
+
+async function connectWithRetry(mongoUri, options = {}) {
+    const {
+        initialDelayMs = 1000,
+        maxDelayMs = 30000,
+        maxAttempts = Number(process.env.MONGO_CONNECT_ATTEMPTS || 0)
+    } = options;
+
+    let attempt = 0;
+    let delay = initialDelayMs;
+
+    while (maxAttempts === 0 || attempt < maxAttempts) {
+        attempt += 1;
+        try {
+            await mongoose.connect(mongoUri);
+            dbReady = true;
+            await ensureAdminUser();
+            startEscrowSlaWorker();
+            // eslint-disable-next-line no-console
+            console.log("MongoDB connection established.");
+            return;
+        } catch (error) {
+            dbReady = false;
+            // eslint-disable-next-line no-console
+            console.error(
+                `MongoDB connection failed (attempt ${attempt}). Retrying in ${Math.round(
+                    delay / 1000
+                )}s...`,
+                error && error.message ? error.message : error
+            );
+            await new Promise((resolve) => setTimeout(resolve, delay));
+            delay = Math.min(maxDelayMs, Math.round(delay * 1.6));
+        }
+    }
+
+    // eslint-disable-next-line no-console
+    console.error("MongoDB connection failed after max attempts.");
+}
+
 async function startServer() {
     const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI;
     const jwtSecret = String(process.env.JWT_SECRET || "");
@@ -265,22 +309,14 @@ async function startServer() {
         process.exit(1);
     }
 
-    try {
-        await mongoose.connect(mongoUri);
-        await ensureAdminUser();
-        startEscrowSlaWorker();
-
-        const port = Number(process.env.PORT || 5000);
-        const server = app.listen(port, () => {
-            // eslint-disable-next-line no-console
-            console.log(`TradeCircle server running at http://localhost:${port}`);
-        });
-        return server;
-    } catch (error) {
+    const port = Number(process.env.PORT || 5000);
+    const server = app.listen(port, () => {
         // eslint-disable-next-line no-console
-        console.error("Failed to start server:", error.message);
-        process.exit(1);
-    }
+        console.log(`TradeCircle server running at http://localhost:${port}`);
+    });
+
+    connectWithRetry(mongoUri);
+    return server;
 }
 
 if (require.main === module) {
